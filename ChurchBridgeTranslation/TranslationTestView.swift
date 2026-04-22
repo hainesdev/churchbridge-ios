@@ -253,7 +253,11 @@ struct TranslationTestView: View {
             HStack(spacing: 12) {
                 diagnosticCard(title: "Capture Path", value: viewModel.diagnostics.capturePath, detail: viewModel.diagnostics.fallbackReason.isEmpty ? "Preferred native path active" : viewModel.diagnostics.fallbackReason)
                 diagnosticCard(title: "Input Level", value: percent(viewModel.diagnostics.rmsLevel), detail: viewModel.diagnostics.speechDetected ? "Speech active" : "Room tone")
-                diagnosticCard(title: "Chunks Sent", value: "\(viewModel.diagnostics.batchesSent)", detail: relativeTime(viewModel.diagnostics.lastBatchAt))
+                diagnosticCard(title: "Chunks Emitted", value: "\(viewModel.interpreterChunksObserved)", detail: relativeTime(viewModel.interpreterLastChunkObservedAt))
+            }
+            HStack(spacing: 12) {
+                diagnosticCard(title: "Chunks Sent", value: "\(viewModel.interpreterChunksSent)", detail: relativeTime(viewModel.interpreterLastChunkSentAt))
+                diagnosticCard(title: "Send Failures", value: "\(viewModel.interpreterSendFailures)", detail: relativeTime(viewModel.interpreterLastSendFailureAt))
             }
         }
     }

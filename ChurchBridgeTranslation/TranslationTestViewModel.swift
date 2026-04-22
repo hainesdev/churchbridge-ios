@@ -39,6 +39,12 @@ final class TranslationTestViewModel {
     var sessionID: Int?
     var isRunning = false
     var showSettings = false
+    var interpreterChunksObserved: Int { audioChunksObserved }
+    var interpreterChunksSent: Int { audioChunksSent }
+    var interpreterSendFailures: Int { audioSendFailures }
+    var interpreterLastChunkObservedAt: Date? { lastAudioChunkObservedAt }
+    var interpreterLastChunkSentAt: Date? { lastAudioChunkSentAt }
+    var interpreterLastSendFailureAt: Date? { lastAudioSendFailureAt }
 
     private let bibleService = BibleVersionService()
     private let streamClient = StreamSocketClient()

@@ -9,6 +9,7 @@ final class AudioCaptureManager: NSObject {
     private let session = AVAudioSession.sharedInstance()
     private let engine = AVAudioEngine()
     private let processingQueue = DispatchQueue(label: "ChurchBridgeTranslation.audio-processing", qos: .userInitiated)
+    private let processingQueueKey = DispatchSpecificKey<UInt8>()
     private let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)
     private var hardwareInputFormat: AVAudioFormat?
     private var converter: AVAudioConverter?
@@ -20,9 +21,13 @@ final class AudioCaptureManager: NSObject {
     // aligned with that production path.
     private let chunkSamples = 1_600
     private var isRunning = false
+    private var currentMode: CaptureMode?
+    private var currentRequestedMode: CaptureMode?
+    private var isReconfiguring = false
 
     override init() {
         super.init()
+        processingQueue.setSpecific(key: processingQueueKey, value: 1)
         NotificationCenter.default.addObserver(self, selector: #selector(handleRouteChange), name: AVAudioSession.routeChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleEngineConfigurationChange), name: .AVAudioEngineConfigurationChange, object: engine)
@@ -43,6 +48,8 @@ final class AudioCaptureManager: NSObject {
         }
 
         let effectiveMode = resolveEffectiveMode(requestedMode: mode)
+        currentMode = effectiveMode
+        currentRequestedMode = mode
         try configureSession(for: effectiveMode)
         try configureEngine(for: effectiveMode, requestedMode: mode)
         engine.prepare()
@@ -63,6 +70,8 @@ final class AudioCaptureManager: NSObject {
         }
 
         isRunning = false
+        currentMode = nil
+        currentRequestedMode = nil
         diagnostics.engineRunning = false
         diagnostics.speechDetected = false
         diagnostics.rmsLevel = 0
@@ -168,9 +177,7 @@ final class AudioCaptureManager: NSObject {
 
         hardwareInputFormat = hardwareFormat
         converter = AVAudioConverter(from: monoFormat, to: targetFormat)
-        processingQueue.sync {
-            pendingSamples.removeAll(keepingCapacity: false)
-        }
+        resetPendingSamples()
 
         diagnostics.inputSampleRate = hardwareFormat.sampleRate
         diagnostics.inputChannels = Int(hardwareFormat.channelCount)
@@ -392,6 +399,9 @@ final class AudioCaptureManager: NSObject {
     private func handleRouteChange(_ notification: Notification) {
         refreshRouteDiagnostics()
         publishDiagnostics()
+        if isRunning {
+            reconfigureCaptureGraph(reason: "audio route change")
+        }
     }
 
     @objc
@@ -405,14 +415,7 @@ final class AudioCaptureManager: NSObject {
         }
 
         if type == .ended, isRunning {
-            do {
-                try session.setActive(true)
-                try engine.start()
-                diagnostics.engineRunning = engine.isRunning
-                publishDiagnostics()
-            } catch {
-                emitError("Audio interruption recovery failed: \(error.localizedDescription)")
-            }
+            reconfigureCaptureGraph(reason: "audio interruption ended")
         }
     }
 
@@ -421,6 +424,39 @@ final class AudioCaptureManager: NSObject {
         if isRunning {
             refreshRouteDiagnostics()
             publishDiagnostics()
+            reconfigureCaptureGraph(reason: "engine configuration change")
+        }
+    }
+
+    private func reconfigureCaptureGraph(reason: String) {
+        guard isRunning, !isReconfiguring else { return }
+        guard let mode = currentMode, let requestedMode = currentRequestedMode else { return }
+
+        isReconfiguring = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            defer { self.isReconfiguring = false }
+
+            do {
+                try self.configureSession(for: mode)
+                try self.configureEngine(for: mode, requestedMode: requestedMode)
+                self.engine.prepare()
+                try self.engine.start()
+                self.diagnostics.engineRunning = self.engine.isRunning
+                self.refreshRouteDiagnostics()
+                self.publishDiagnostics()
+            } catch {
+                self.emitError("Audio capture reconfiguration failed after \(reason): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func resetPendingSamples() {
+        let clear = { self.pendingSamples.removeAll(keepingCapacity: false) }
+        if DispatchQueue.getSpecific(key: processingQueueKey) != nil {
+            clear()
+        } else {
+            processingQueue.sync(execute: clear)
         }
     }
 }
