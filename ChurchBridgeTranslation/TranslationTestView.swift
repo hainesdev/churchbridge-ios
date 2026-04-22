@@ -1356,18 +1356,10 @@ private struct BibleBookPickerSheet: View {
                             onSelect(book)
                             dismiss()
                         } label: {
-                            HStack {
-                                Text(book.bookName)
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                if book.bookName == currentRequest.book {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.accentColor)
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            BibleBookRow(
+                                title: book.bookName,
+                                isSelected: book.bookName == currentRequest.book
+                            )
                         }
                         .buttonStyle(.plain)
 
@@ -1385,5 +1377,25 @@ private struct BibleBookPickerSheet: View {
                 }
             }
         }
+    }
+}
+
+private struct BibleBookRow: View {
+    let title: String
+    let isSelected: Bool
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .foregroundColor(.primary)
+            Spacer()
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(.accentColor)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
