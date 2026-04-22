@@ -607,6 +607,10 @@ private struct VerseSheet: View {
     @State private var selectedItemID: String
     @State private var chapterRequest: ChapterReaderRequest?
 
+    private let cardInk = Color(uiColor: .label)
+    private let cardSecondaryInk = Color(uiColor: .secondaryLabel)
+    private let chipInk = Color(red: 0.13, green: 0.13, blue: 0.15)
+
     init(segment: TranslationSegment, baseURL: URL?, churchID: String) {
         self.segment = segment
         self.baseURL = baseURL
@@ -725,10 +729,10 @@ private struct VerseSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(item.reference)
                 .font(.system(.title2, design: .rounded, weight: .bold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(cardInk)
             Text(item.explanation)
                 .font(.system(.body, design: .rounded))
-                .foregroundStyle(.primary.opacity(0.75))
+                .foregroundStyle(cardSecondaryInk)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -744,10 +748,10 @@ private struct VerseSheet: View {
                         .foregroundStyle(accent)
                     Text(title)
                         .font(.system(.headline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(cardInk)
                     Text(passage.reference)
                         .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(cardSecondaryInk)
                 }
 
                 Spacer()
@@ -768,7 +772,7 @@ private struct VerseSheet: View {
 
             Text("Continue reading from \(passage.reference) in \(languageLabel).")
                 .font(.system(.footnote, design: .rounded))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(cardSecondaryInk)
 
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(passage.verses, id: \.reference) { verse in
@@ -779,7 +783,7 @@ private struct VerseSheet: View {
                             .frame(width: 28, alignment: .leading)
                         Text(verse.text)
                             .font(.system(.body, design: .rounded))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(cardInk)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
@@ -794,10 +798,10 @@ private struct VerseSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Passage text is still loading")
                 .font(.system(.headline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(cardInk)
             Text("The reference and explanation are available, but the full passage text has not arrived yet. Try reopening this verse in a moment.")
                 .font(.system(.body, design: .rounded))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(cardSecondaryInk)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -810,7 +814,7 @@ private struct VerseSheet: View {
     }
 
     private func chipForeground(for item: VerseSheetItem) -> Color {
-        selectedItemID == item.id ? (item.kind == .detected ? .orange : .blue) : .primary
+        selectedItemID == item.id ? (item.kind == .detected ? .orange : .blue) : chipInk
     }
 }
 
