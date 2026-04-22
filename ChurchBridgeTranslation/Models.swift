@@ -26,6 +26,8 @@ enum AudioCaptureStrategy: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
+    static let liveDefault: AudioCaptureStrategy = .appleVoicePassthrough
+
     var summary: String {
         switch self {
         case .appleVoicePassthrough:
@@ -44,6 +46,10 @@ enum AudioCaptureStrategy: String, CaseIterable, Identifiable, Codable {
         case .persistentConverter, .ephemeralConverter:
             return 16_000
         }
+    }
+
+    var isDiagnosticsOnly: Bool {
+        self != .appleVoicePassthrough
     }
 }
 

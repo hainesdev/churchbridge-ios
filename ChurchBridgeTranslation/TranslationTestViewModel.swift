@@ -132,17 +132,21 @@ final class TranslationTestViewModel {
 
         latestError = ""
         displayFeed.resetForNewSession()
+        let liveStrategy = AudioCaptureStrategy.liveDefault
+        if settings.captureStrategy != liveStrategy {
+            settings.captureStrategy = liveStrategy
+        }
         let configuration = StreamSocketClient.StreamConfiguration(
             url: wsBaseURL,
             churchID: settings.churchID,
-            sampleRate: settings.captureStrategy.targetSampleRate,
+            sampleRate: liveStrategy.targetSampleRate,
             sourceScriptureVersion: settings.sourceScriptureVersion,
             displayScriptureVersion: settings.displayScriptureVersion
         )
 
         await streamClient.connect(configuration: configuration)
         do {
-            try await audioCapture.start(mode: settings.captureMode, strategy: settings.captureStrategy)
+            try await audioCapture.start(mode: settings.captureMode, strategy: liveStrategy)
             isRunning = true
         } catch {
             latestError = error.localizedDescription

@@ -46,7 +46,8 @@ final class SettingsStore {
         self.sourceScriptureVersion = defaults.string(forKey: Keys.sourceVersion) ?? "rvr1960"
         self.displayScriptureVersion = defaults.string(forKey: Keys.displayVersion) ?? "kjv"
         self.captureMode = CaptureMode(rawValue: defaults.string(forKey: Keys.captureMode) ?? "") ?? .voiceProcessing
-        self.captureStrategy = AudioCaptureStrategy(rawValue: defaults.string(forKey: Keys.captureStrategy) ?? "") ?? .appleVoicePassthrough
+        self.captureStrategy = .liveDefault
+        defaults.set(self.captureStrategy.rawValue, forKey: Keys.captureStrategy)
     }
 
     var apiBaseURL: URL? {

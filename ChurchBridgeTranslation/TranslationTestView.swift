@@ -111,10 +111,10 @@ struct TranslationTestView: View {
             Text("Ready for field testing")
                 .font(.system(.title3, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
-            Text("Use Voice Processing first, then compare against Echo-Cancelled Input or Raw Debug in the same room.")
+            Text("Use Voice Processing with Apple Voice Passthrough. Alternate capture strategies stay available for remote diagnostics, not normal live use.")
                 .font(.system(.body, design: .rounded))
                 .foregroundStyle(.white.opacity(0.76))
-            Text("Capture strategy: \(viewModel.settings.captureStrategy.rawValue)")
+            Text("Live capture strategy: \(AudioCaptureStrategy.liveDefault.rawValue)")
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.72))
             diagnosticsGrid
@@ -463,15 +463,7 @@ private struct SettingsSheet: View {
                     Text(viewModel.settings.captureMode.sessionModeDescription)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                }
-
-                Section("Capture Strategy") {
-                    Picker("Strategy", selection: $viewModel.settings.captureStrategy) {
-                        ForEach(AudioCaptureStrategy.allCases) { strategy in
-                            Text(strategy.rawValue).tag(strategy)
-                        }
-                    }
-                    Text(viewModel.settings.captureStrategy.summary)
+                    Text("Live capture uses Apple Voice Passthrough. Alternate strategies are reserved for remote diagnostics.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
