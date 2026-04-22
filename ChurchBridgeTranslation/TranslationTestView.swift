@@ -1349,22 +1349,24 @@ private struct BibleBookPickerSheet: View {
 
     var body: some View {
         NavigationStack {
-            List(books) { book in
-                Button {
-                    onSelect(book)
-                    dismiss()
-                } label: {
-                    HStack {
-                        Text(book.bookName)
-                            .foregroundColor(.primary)
-                        Spacer()
-                        if book.bookName == currentRequest.book {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.accentColor)
+            List {
+                ForEach(books) { book in
+                    Button {
+                        onSelect(book)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text(book.bookName)
+                                .foregroundColor(.primary)
+                            Spacer()
+                            if book.bookName == currentRequest.book {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.accentColor)
+                            }
                         }
                     }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             .navigationTitle("Books")
             .toolbar {
