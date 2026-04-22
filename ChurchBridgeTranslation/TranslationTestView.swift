@@ -1351,7 +1351,7 @@ private struct BibleBookPickerSheet: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(books, id: \.bookID) { book in
+                    ForEach(Array(books), id: \BibleBook.bookID) { (book: BibleBook) in
                         Button {
                             onSelect(book)
                             dismiss()
