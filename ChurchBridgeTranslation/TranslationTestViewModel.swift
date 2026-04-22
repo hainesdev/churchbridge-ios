@@ -13,6 +13,16 @@ private struct InterpreterProbeSnapshot {
     let sessionStartCount: Int
 }
 
+private struct OutgoingAudioChunkRecord {
+    let sequence: Int
+    let createdAt: Date
+    let sampleRate: Int
+    let encodedBytes: Int
+    let decodedBytes: Int
+    let base64: String
+    let analysis: [String: Any]
+}
+
 @MainActor
 @Observable
 final class TranslationTestViewModel {
@@ -54,6 +64,8 @@ final class TranslationTestViewModel {
     private var lastTranslationEventAt: Date?
     private var lastDisplayEventType = ""
     private var displayEventTypeCounts: [String: Int] = [:]
+    private var outgoingChunkSequence = 0
+    private var recentOutgoingChunks: [OutgoingAudioChunkRecord] = []
 
     init() {
         let settings = SettingsStore()
@@ -267,6 +279,16 @@ final class TranslationTestViewModel {
                     status: result.success ? "completed" : "failed",
                     payload: result.payload
                 )
+            case "audio_forensics_probe":
+                let durationMs = intValue(payload["duration_ms"], default: 7_000)
+                let maxChunks = intValue(payload["max_chunks"], default: 3)
+                let result = await self.runAudioForensicsProbe(durationMs: durationMs, maxChunks: maxChunks)
+                await self.postDiagnosticsReport(
+                    commandID: commandID,
+                    reportType: commandName,
+                    status: result.success ? "completed" : "failed",
+                    payload: result.payload
+                )
             default:
                 await self.postDiagnosticsReport(
                     commandID: commandID,
@@ -291,7 +313,21 @@ final class TranslationTestViewModel {
         }
         lastAudioChunkObservedAt = now
 
+        let localAnalysis = analyzeOutgoingChunk(base64: base64)
+
         let result = await streamClient.sendAudio(base64Float32: base64)
+        let sequence = nextOutgoingChunkSequence()
+        rememberOutgoingChunk(
+            OutgoingAudioChunkRecord(
+                sequence: sequence,
+                createdAt: now,
+                sampleRate: 16_000,
+                encodedBytes: result.encodedBytes,
+                decodedBytes: result.decodedBytes,
+                base64: base64,
+                analysis: localAnalysis
+            )
+        )
         if result.success {
             audioChunksSent += 1
             audioBytesEncodedSent += result.encodedBytes
@@ -514,6 +550,94 @@ final class TranslationTestViewModel {
         )
     }
 
+    private func runAudioForensicsProbe(durationMs: Int, maxChunks: Int) async -> (success: Bool, payload: [String: Any]) {
+        let initialSnapshot = diagnosticsSnapshotPayload()
+        let initialSequence = outgoingChunkSequence
+        let usedExistingCapture = isRunning
+        let usedExistingStream = isRunning || streamStatus == .connected || streamStatus == .connecting || streamStatus == .reconnecting
+        var startedLocalStream = false
+        var startedLocalCapture = false
+
+        if !usedExistingStream {
+            guard let wsBaseURL = settings.webSocketBaseURL else {
+                return (
+                    false,
+                    [
+                        "error": NetworkError.invalidBaseURL.localizedDescription ?? "Invalid base URL.",
+                        "initial_snapshot": initialSnapshot,
+                    ]
+                )
+            }
+            let configuration = StreamSocketClient.StreamConfiguration(
+                url: wsBaseURL,
+                churchID: settings.churchID,
+                sampleRate: 16_000,
+                sourceScriptureVersion: settings.sourceScriptureVersion,
+                displayScriptureVersion: settings.displayScriptureVersion
+            )
+            await streamClient.connect(configuration: configuration)
+            startedLocalStream = true
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+
+        if !usedExistingCapture {
+            do {
+                try await audioCapture.start(mode: settings.captureMode)
+                startedLocalCapture = true
+            } catch {
+                if startedLocalStream {
+                    await streamClient.disconnect()
+                }
+                return (
+                    false,
+                    [
+                        "error": error.localizedDescription,
+                        "initial_snapshot": initialSnapshot,
+                        "final_snapshot": diagnosticsSnapshotPayload(),
+                    ]
+                )
+            }
+        }
+
+        let observation = await observeProbe(durationMs: durationMs)
+        let newChunks = recentOutgoingChunks
+            .filter { $0.sequence > initialSequence }
+            .suffix(max(1, min(maxChunks, 5)))
+        let localChunks = newChunks.map(chunkPayload)
+        let serverAnalyses = await requestServerChunkAnalyses(for: Array(newChunks))
+
+        if startedLocalCapture {
+            audioCapture.stop()
+        }
+        if startedLocalStream {
+            await streamClient.disconnect()
+        }
+
+        let successfulServerAnalyses = serverAnalyses.filter { ($0["analysis"] as? [String: Any]) != nil }
+        let looksLikeSpeech = successfulServerAnalyses.contains { item in
+            let analysis = item["analysis"] as? [String: Any]
+            let float32 = analysis?["float32"] as? [String: Any]
+            return (float32?["looks_like_speech_energy"] as? Bool) ?? false
+        }
+
+        return (
+            !newChunks.isEmpty && !successfulServerAnalyses.isEmpty && looksLikeSpeech,
+            [
+                "duration_ms": durationMs,
+                "used_existing_capture": usedExistingCapture,
+                "used_existing_stream": usedExistingStream,
+                "started_local_capture": startedLocalCapture,
+                "started_local_stream": startedLocalStream,
+                "initial_snapshot": initialSnapshot,
+                "probe_observation": observation,
+                "local_chunk_count": newChunks.count,
+                "local_chunks": localChunks,
+                "server_analyses": serverAnalyses,
+                "final_snapshot": diagnosticsSnapshotPayload(),
+            ]
+        )
+    }
+
     private func observeProbe(durationMs: Int) async -> [String: Any] {
         let sampleCount = max(1, min(20, durationMs / 250))
         let startBatches = diagnostics.batchesSent
@@ -635,6 +759,7 @@ final class TranslationTestViewModel {
                 "last_translation_event_at": jsonValue(lastTranslationEventAt?.ISO8601Format()),
                 "last_display_event_type": lastDisplayEventType,
                 "display_event_type_counts": displayEventTypeCounts,
+                "recent_outgoing_chunks": recentOutgoingChunks.map(chunkPayload),
             ],
             "display_feed": [
                 "connected": displayFeed.snapshot.connected,
@@ -728,6 +853,145 @@ final class TranslationTestViewModel {
 
     private func jsonValue(_ value: Any?) -> Any {
         value ?? NSNull()
+    }
+
+    private func analyzeOutgoingChunk(base64: String) -> [String: Any] {
+        guard let data = Data(base64Encoded: base64) else {
+            return [
+                "decode_error": true,
+                "sample_count": 0,
+            ]
+        }
+        let floats: [Float] = data.withUnsafeBytes { rawBuffer in
+            let bound = rawBuffer.bindMemory(to: Float.self)
+            return Array(bound)
+        }
+        guard !floats.isEmpty else {
+            return [
+                "decode_error": false,
+                "sample_count": 0,
+                "looks_silent": true,
+            ]
+        }
+
+        var peak: Float = 0
+        var sumSquares: Float = 0
+        var sumAbs: Float = 0
+        var nearZeroCount = 0
+        var clippingCount = 0
+        var zeroCrossings = 0
+        var previousSign = floats[0] >= 0
+
+        for sample in floats {
+            let abs = Swift.abs(sample)
+            peak = max(peak, abs)
+            sumSquares += sample * sample
+            sumAbs += abs
+            if abs < 0.001 { nearZeroCount += 1 }
+            if abs >= 0.98 { clippingCount += 1 }
+            let currentSign = sample >= 0
+            if currentSign != previousSign {
+                zeroCrossings += 1
+            }
+            previousSign = currentSign
+        }
+
+        let count = Float(floats.count)
+        let rms = sqrt(sumSquares / max(count, 1.0))
+        let nearZeroRatio = Float(nearZeroCount) / max(count, 1.0)
+        let clippingRatio = Float(clippingCount) / max(count, 1.0)
+        return [
+            "sample_count": floats.count,
+            "duration_ms": Double(floats.count) / 16.0,
+            "rms": Double(rms),
+            "peak": Double(peak),
+            "mean_abs": Double(sumAbs / max(count, 1.0)),
+            "near_zero_ratio": Double(nearZeroRatio),
+            "clipping_ratio": Double(clippingRatio),
+            "zero_crossing_ratio": Double(Float(zeroCrossings) / max(count - 1.0, 1.0)),
+            "looks_silent": rms < 0.005 && nearZeroRatio > 0.9,
+            "looks_like_speech_energy": rms >= 0.01 && peak >= 0.03 && nearZeroRatio < 0.98,
+            "sample_preview": floats.prefix(16).map { Double($0) },
+        ]
+    }
+
+    private func nextOutgoingChunkSequence() -> Int {
+        outgoingChunkSequence += 1
+        return outgoingChunkSequence
+    }
+
+    private func rememberOutgoingChunk(_ record: OutgoingAudioChunkRecord) {
+        recentOutgoingChunks.append(record)
+        if recentOutgoingChunks.count > 8 {
+            recentOutgoingChunks.removeFirst(recentOutgoingChunks.count - 8)
+        }
+    }
+
+    private func chunkPayload(_ chunk: OutgoingAudioChunkRecord) -> [String: Any] {
+        [
+            "sequence": chunk.sequence,
+            "created_at": chunk.createdAt.ISO8601Format(),
+            "sample_rate": chunk.sampleRate,
+            "encoded_bytes": chunk.encodedBytes,
+            "decoded_bytes": chunk.decodedBytes,
+            "analysis": chunk.analysis,
+        ]
+    }
+
+    private func requestServerChunkAnalyses(for chunks: [OutgoingAudioChunkRecord]) async -> [[String: Any]] {
+        guard !chunks.isEmpty, let apiBaseURL = settings.apiBaseURL else { return [] }
+
+        let endpoint = apiBaseURL
+            .appending(path: "api")
+            .appending(path: "churches")
+            .appending(path: settings.churchID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? settings.churchID)
+            .appending(path: "mobile-diagnostics")
+            .appending(path: "analyses")
+            .appending(path: "audio-chunk")
+
+        var responses: [[String: Any]] = []
+        for chunk in chunks {
+            let body: [String: Any] = [
+                "audio_base64": chunk.base64,
+                "sample_rate": chunk.sampleRate,
+                "label": "chunk-\(chunk.sequence)",
+            ]
+
+            do {
+                var request = URLRequest(url: endpoint)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    responses.append([
+                        "sequence": chunk.sequence,
+                        "error": "Server analysis returned no HTTP response.",
+                    ])
+                    continue
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    responses.append([
+                        "sequence": chunk.sequence,
+                        "error": "Server analysis failed with HTTP \(http.statusCode).",
+                    ])
+                    continue
+                }
+                let json = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+                responses.append([
+                    "sequence": chunk.sequence,
+                    "label": json["label"] as? String ?? "chunk-\(chunk.sequence)",
+                    "byte_length": json["byte_length"] as? Int ?? 0,
+                    "analysis": json["analysis"] as? [String: Any] ?? [:],
+                ])
+            } catch {
+                responses.append([
+                    "sequence": chunk.sequence,
+                    "error": "Server analysis failed: \(error.localizedDescription)",
+                ])
+            }
+        }
+        return responses
     }
 
     private func recordSessionStart(_ sessionID: Int?) {

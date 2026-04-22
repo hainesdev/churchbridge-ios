@@ -14,7 +14,11 @@ final class AudioCaptureManager: NSObject {
     private var converter: AVAudioConverter?
     private var diagnostics = AudioDiagnostics()
     private var pendingSamples: [Float] = []
-    private let chunkSamples = 320
+    // Match the browser client by sending ~100 ms of 16 kHz mono audio per websocket
+    // message instead of 20 ms frames. Deepgram handles short frames, but the browser
+    // path that is known-good batches before sending, so we keep the iOS transport cadence
+    // aligned with that production path.
+    private let chunkSamples = 1_600
     private var isRunning = false
 
     override init() {
