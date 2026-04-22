@@ -7,6 +7,8 @@ struct TranslationTestView: View {
     @State private var userPinnedToLive = true
     @State private var showDiagnostics = false
     @State private var showAbout = false
+    @State private var controlsVisible = true
+    @State private var chromeHideTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -25,6 +27,7 @@ struct TranslationTestView: View {
             }
             .navigationTitle("Interpreter")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(controlsVisible ? .visible : .hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -90,6 +93,14 @@ struct TranslationTestView: View {
             .task {
                 await viewModel.onAppear()
             }
+            .onChange(of: isLive) { _, live in
+                if live {
+                    registerInteraction()
+                } else {
+                    chromeHideTask?.cancel()
+                    controlsVisible = true
+                }
+            }
         }
     }
 
@@ -117,36 +128,46 @@ struct TranslationTestView: View {
     }
 
     private var idleCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Hear the sermon. Feel the message.")
-                .font(.system(.title2, design: .rounded, weight: .bold))
-                .foregroundStyle(.white)
+        Button {
+            Task { await viewModel.start() }
+        } label: {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Hear the sermon. Feel the message.")
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .foregroundStyle(.white)
 
-            Text("ChurchBridge listens to live Spanish audio and writes the English translation in real time, helping carry the emotion, emphasis, and meaning of the sermon across languages.")
-                .font(.system(.body, design: .rounded))
-                .foregroundStyle(.white.opacity(0.78))
+                Text("ChurchBridge listens to live Spanish audio and writes the English translation in real time, helping carry the emotion, emphasis, and meaning of the sermon across languages.")
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.78))
 
-            Text("When the message points to scripture, ChurchBridge adds verse pills so you can open the explanation, compare the passage in both languages, and continue reading the Bible from that exact place.")
-                .font(.system(.body, design: .rounded))
-                .foregroundStyle(.white.opacity(0.72))
+                Text("When the message points to scripture, ChurchBridge adds verse pills so you can open the explanation, compare the passage in both languages, and continue reading the Bible from that exact place.")
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
 
-            VStack(alignment: .leading, spacing: 10) {
-                featureRow(icon: "circle.fill", iconColor: .orange, title: "Orange pill", detail: "The sermon is likely quoting this verse.")
-                featureRow(icon: "circle.fill", iconColor: .blue, title: "Blue pill", detail: "A related passage may deepen the moment.")
-                featureRow(icon: "ellipsis.circle.fill", iconColor: Color(red: 0.70, green: 0.90, blue: 0.84), title: "Menu", detail: "Start listening, reconnect, or open more details.")
+                VStack(alignment: .leading, spacing: 10) {
+                    featureRow(icon: "circle.fill", iconColor: .orange, title: "Orange pill", detail: "The sermon is likely quoting this verse.")
+                    featureRow(icon: "circle.fill", iconColor: .blue, title: "Blue pill", detail: "A related passage may deepen the moment.")
+                    featureRow(icon: "hand.tap.fill", iconColor: Color(red: 0.70, green: 0.90, blue: 0.84), title: "Tap anywhere", detail: "Start listening and close this welcome screen.")
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(22)
+            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 1))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(22)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 1))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
     }
 
     private var liveFeed: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    liveStatusStrip
+                    if controlsVisible {
+                        liveStatusStrip
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
 
                     if viewModel.displayFeed.snapshot.segments.isEmpty, activeSpanish.isEmpty, viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
                         waitingCard
@@ -160,7 +181,7 @@ struct TranslationTestView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 14) {
                                 Text(segment.english)
-                                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                                    .font(.system(size: CGFloat(viewModel.settings.translationTextSize), weight: .semibold, design: .rounded))
                                     .foregroundStyle(segment.id == viewModel.displayFeed.snapshot.flashingID ? Color(red: 0.84, green: 0.94, blue: 1.0) : .white)
                                     .multilineTextAlignment(.leading)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -194,10 +215,11 @@ struct TranslationTestView: View {
             }
             .scrollIndicators(.hidden)
             .overlay(alignment: .bottomTrailing) {
-                if !userPinnedToLive {
+                if !userPinnedToLive && controlsVisible {
                     Button {
                         userPinnedToLive = true
                         scrollToLiveRequested += 1
+                        registerInteraction()
                     } label: {
                         Label("Live", systemImage: "arrow.down.to.line")
                             .font(.system(.caption, design: .rounded, weight: .semibold))
@@ -218,7 +240,17 @@ struct TranslationTestView: View {
             .onChange(of: scrollToLiveRequested) { _, _ in
                 withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("live-bottom", anchor: .bottom) }
             }
-            .simultaneousGesture(DragGesture().onChanged { _ in userPinnedToLive = false })
+            .simultaneousGesture(
+                DragGesture().onChanged { _ in
+                    userPinnedToLive = false
+                    registerInteraction()
+                }
+            )
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    registerInteraction()
+                }
+            )
         }
     }
 
@@ -255,7 +287,7 @@ struct TranslationTestView: View {
         VStack(alignment: .leading, spacing: 10) {
             if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
                 Text("\(viewModel.displayFeed.snapshot.partialEnglish)\u{258C}")
-                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    .font(.system(size: CGFloat(viewModel.settings.translationTextSize), weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.78))
             }
             if !activeSpanish.isEmpty {
@@ -267,6 +299,19 @@ struct TranslationTestView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
         .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func registerInteraction() {
+        controlsVisible = true
+        guard isLive else { return }
+        chromeHideTask?.cancel()
+        chromeHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, isLive else { return }
+            withAnimation(.easeOut(duration: 0.25)) {
+                controlsVisible = false
+            }
+        }
     }
 
     private func versePillRow(for segment: TranslationSegment) -> some View {
@@ -451,6 +496,21 @@ private struct SettingsSheet: View {
                     Text("Live capture uses Apple Voice Passthrough. Advanced diagnostics stay in the waveform panel.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+
+                Section("Reading") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Translation Size")
+                            Spacer()
+                            Text("\(Int(viewModel.settings.translationTextSize.rounded())) pt")
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $viewModel.settings.translationTextSize, in: 20...32, step: 1)
+                        Text("This controls the size of the live English translation.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .navigationTitle("Advanced")

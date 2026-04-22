@@ -11,6 +11,7 @@ final class SettingsStore {
         static let displayVersion = "churchbridge.displayVersion"
         static let captureMode = "churchbridge.captureMode"
         static let captureStrategy = "churchbridge.captureStrategy"
+        static let translationTextSize = "churchbridge.translationTextSize"
     }
 
     private let defaults: UserDefaults
@@ -39,6 +40,10 @@ final class SettingsStore {
         didSet { defaults.set(captureStrategy.rawValue, forKey: Keys.captureStrategy) }
     }
 
+    var translationTextSize: Double {
+        didSet { defaults.set(translationTextSize, forKey: Keys.translationTextSize) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.baseURLString = defaults.string(forKey: Keys.baseURL) ?? "https://churchbridge.dhaines.dev/"
@@ -47,6 +52,8 @@ final class SettingsStore {
         self.displayScriptureVersion = defaults.string(forKey: Keys.displayVersion) ?? "kjv"
         self.captureMode = CaptureMode(rawValue: defaults.string(forKey: Keys.captureMode) ?? "") ?? .voiceProcessing
         self.captureStrategy = .liveDefault
+        let storedTextSize = defaults.object(forKey: Keys.translationTextSize) as? Double
+        self.translationTextSize = storedTextSize ?? 24
         defaults.set(self.captureStrategy.rawValue, forKey: Keys.captureStrategy)
     }
 
