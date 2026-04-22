@@ -4,6 +4,7 @@ struct TranslationTestView: View {
     @Bindable var viewModel: TranslationTestViewModel
     @State private var selectedSegment: TranslationSegment?
     @State private var bibleReaderRequest: ChapterReaderRequest?
+    @State private var showBibleContents = false
     @State private var scrollToLiveRequested = 0
     @State private var userPinnedToLive = true
     @State private var showDiagnostics = false
@@ -52,12 +53,14 @@ struct TranslationTestView: View {
 
                         Divider()
 
-                        if let lastBibleRequest {
-                            Button {
+                        Button {
+                            if let lastBibleRequest {
                                 bibleReaderRequest = lastBibleRequest
-                            } label: {
-                                Label("Open Bible", systemImage: "book.closed")
+                            } else {
+                                showBibleContents = true
                             }
+                        } label: {
+                            Label(lastBibleRequest == nil ? "Browse Bible" : "Resume Bible", systemImage: "book.closed")
                         }
 
                         Button {
@@ -102,6 +105,17 @@ struct TranslationTestView: View {
             .sheet(item: $bibleReaderRequest) { request in
                 ChapterReaderSheet(request: request, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID, settings: viewModel.settings)
             }
+            .sheet(isPresented: $showBibleContents) {
+                if let defaultBibleRequest {
+                    ChapterReaderSheet(
+                        request: defaultBibleRequest,
+                        baseURL: viewModel.settings.apiBaseURL,
+                        churchID: viewModel.settings.churchID,
+                        settings: viewModel.settings,
+                        showContentsOnAppear: true
+                    )
+                }
+            }
             .task {
                 await viewModel.onAppear()
             }
@@ -136,6 +150,18 @@ struct TranslationTestView: View {
             book: book,
             chapter: chapter,
             highlightVerse: viewModel.settings.lastBibleVerse
+        )
+    }
+
+    private var defaultBibleRequest: ChapterReaderRequest? {
+        let versionSlug = viewModel.settings.displayScriptureVersion
+        let versionName = viewModel.bibleVersions.first(where: { $0.slug == versionSlug })?.name ?? versionSlug.uppercased()
+        return ChapterReaderRequest(
+            versionSlug: versionSlug,
+            versionName: versionName,
+            book: "Genesis",
+            chapter: 1,
+            highlightVerse: nil
         )
     }
 
@@ -863,6 +889,7 @@ private struct ChapterReaderSheet: View {
     let baseURL: URL?
     let churchID: String
     let settings: SettingsStore
+    let showContentsOnAppear: Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var currentRequest: ChapterReaderRequest
@@ -876,11 +903,12 @@ private struct ChapterReaderSheet: View {
 
     private let service = BibleVersionService()
 
-    init(request: ChapterReaderRequest, baseURL: URL?, churchID: String, settings: SettingsStore) {
+    init(request: ChapterReaderRequest, baseURL: URL?, churchID: String, settings: SettingsStore, showContentsOnAppear: Bool = false) {
         self.request = request
         self.baseURL = baseURL
         self.churchID = churchID
         self.settings = settings
+        self.showContentsOnAppear = showContentsOnAppear
         _currentRequest = State(initialValue: request)
     }
 
@@ -972,7 +1000,12 @@ private struct ChapterReaderSheet: View {
                 chapter: currentRequest.chapter
             )
             loadedChapters = [LoadedBibleChapter(request: currentRequest, chapter: chapter)]
-            persistLocation(for: currentRequest)
+            if !showContentsOnAppear {
+                persistLocation(for: currentRequest)
+            }
+            if showContentsOnAppear {
+                showTableOfContents = true
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
