@@ -177,6 +177,22 @@ struct AudioDiagnostics {
     var echoCancelledInputEnabled = false
     var microphonePermissionGranted = false
     var engineRunning = false
+    var tapCallbackCount = 0
+    var tapFrameCount = 0
+    var lastTapAt: Date?
+    var copyMonoSuccessCount = 0
+    var copyMonoFailureCount = 0
+    var processingInvocationCount = 0
+    var conversionSuccessCount = 0
+    var conversionFailureCount = 0
+    var zeroFrameConversionCount = 0
+    var convertedFrameCount = 0
+    var lastConvertedAt: Date?
+    var pendingSampleCount = 0
+    var pendingSampleHighWaterMark = 0
+    var captureRestartCount = 0
+    var lastRestartAt: Date?
+    var lastRestartReason = ""
 }
 
 struct StreamStartPayload: Encodable {

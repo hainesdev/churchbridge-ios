@@ -295,6 +295,51 @@ final class TranslationTestViewModel {
                     status: result.success ? "completed" : "failed",
                     payload: result.payload
                 )
+            case "capture_pipeline_probe":
+                let durationMs = intValue(payload["duration_ms"], default: 6_000)
+                let includeStream = boolValue(payload["include_stream"], default: false)
+                let requestedMode = captureModeValue(payload["capture_mode"])
+                let result = await self.runCapturePipelineProbe(
+                    durationMs: durationMs,
+                    captureMode: requestedMode,
+                    includeStream: includeStream
+                )
+                await self.postDiagnosticsReport(
+                    commandID: commandID,
+                    reportType: commandName,
+                    status: result.success ? "completed" : "failed",
+                    payload: result.payload
+                )
+            case "capture_rebuild_probe":
+                let durationMs = intValue(payload["duration_ms"], default: 8_000)
+                let rebuildDelayMs = intValue(payload["rebuild_delay_ms"], default: 1_500)
+                let includeStream = boolValue(payload["include_stream"], default: true)
+                let requestedMode = captureModeValue(payload["capture_mode"])
+                let result = await self.runCaptureRebuildProbe(
+                    durationMs: durationMs,
+                    rebuildDelayMs: rebuildDelayMs,
+                    captureMode: requestedMode,
+                    includeStream: includeStream
+                )
+                await self.postDiagnosticsReport(
+                    commandID: commandID,
+                    reportType: commandName,
+                    status: result.success ? "completed" : "failed",
+                    payload: result.payload
+                )
+            case "capture_mode_matrix_probe":
+                let perModeDurationMs = intValue(payload["per_mode_duration_ms"], default: 4_000)
+                let includeStream = boolValue(payload["include_stream"], default: false)
+                let result = await self.runCaptureModeMatrixProbe(
+                    perModeDurationMs: perModeDurationMs,
+                    includeStream: includeStream
+                )
+                await self.postDiagnosticsReport(
+                    commandID: commandID,
+                    reportType: commandName,
+                    status: result.success ? "completed" : "failed",
+                    payload: result.payload
+                )
             default:
                 await self.postDiagnosticsReport(
                     commandID: commandID,
@@ -644,10 +689,253 @@ final class TranslationTestViewModel {
         )
     }
 
+    private func runCapturePipelineProbe(
+        durationMs: Int,
+        captureMode: CaptureMode?,
+        includeStream: Bool
+    ) async -> (success: Bool, payload: [String: Any]) {
+        let requestedMode = captureMode ?? settings.captureMode
+        if isRunning && requestedMode != settings.captureMode {
+            return (
+                false,
+                [
+                    "error": "Stop the current test before probing a different capture mode.",
+                    "requested_mode": requestedMode.rawValue,
+                    "current_mode": settings.captureMode.rawValue,
+                    "initial_snapshot": diagnosticsSnapshotPayload(),
+                ]
+            )
+        }
+
+        let initialSnapshot = diagnosticsSnapshotPayload()
+        let usedExistingCapture = isRunning
+        let usedExistingStream = includeStream && streamIsActive
+        var startedLocalStream = false
+        var startedLocalCapture = false
+
+        if includeStream, !usedExistingStream {
+            guard await connectStreamForDiagnostics() else {
+                return (
+                    false,
+                    [
+                        "error": NetworkError.invalidBaseURL.localizedDescription ?? "Invalid base URL.",
+                        "requested_mode": requestedMode.rawValue,
+                        "initial_snapshot": initialSnapshot,
+                    ]
+                )
+            }
+            startedLocalStream = true
+        }
+
+        if !usedExistingCapture {
+            do {
+                try await audioCapture.start(mode: requestedMode)
+                startedLocalCapture = true
+            } catch {
+                if startedLocalStream {
+                    await streamClient.disconnect()
+                }
+                return (
+                    false,
+                    [
+                        "error": error.localizedDescription,
+                        "requested_mode": requestedMode.rawValue,
+                        "initial_snapshot": initialSnapshot,
+                        "final_snapshot": diagnosticsSnapshotPayload(),
+                    ]
+                )
+            }
+        }
+
+        let observation = await observeProbe(durationMs: durationMs)
+        let finalSnapshot = diagnosticsSnapshotPayload()
+        let stageChecks = capturePipelineStageChecks(
+            initialSnapshot: initialSnapshot,
+            finalSnapshot: finalSnapshot,
+            observation: observation
+        )
+
+        if startedLocalCapture {
+            audioCapture.stop()
+        }
+        if startedLocalStream {
+            await streamClient.disconnect()
+        }
+
+        let tapCallbacksSeen = stageChecks["tap_callbacks_seen"] as? Bool ?? false
+        let convertedFramesSeen = stageChecks["converted_frames_seen"] as? Bool ?? false
+        let chunksSent = stageChecks["audio_chunks_sent"] as? Bool ?? false
+        return (
+            tapCallbacksSeen || convertedFramesSeen || chunksSent,
+            [
+                "duration_ms": durationMs,
+                "requested_mode": requestedMode.rawValue,
+                "include_stream": includeStream,
+                "used_existing_capture": usedExistingCapture,
+                "used_existing_stream": usedExistingStream,
+                "started_local_capture": startedLocalCapture,
+                "started_local_stream": startedLocalStream,
+                "initial_snapshot": initialSnapshot,
+                "probe_observation": observation,
+                "stage_checks": stageChecks,
+                "final_snapshot": finalSnapshot,
+            ]
+        )
+    }
+
+    private func runCaptureRebuildProbe(
+        durationMs: Int,
+        rebuildDelayMs: Int,
+        captureMode: CaptureMode?,
+        includeStream: Bool
+    ) async -> (success: Bool, payload: [String: Any]) {
+        let requestedMode = captureMode ?? settings.captureMode
+        if isRunning && requestedMode != settings.captureMode {
+            return (
+                false,
+                [
+                    "error": "Stop the current test before probing a different capture mode.",
+                    "requested_mode": requestedMode.rawValue,
+                    "current_mode": settings.captureMode.rawValue,
+                    "initial_snapshot": diagnosticsSnapshotPayload(),
+                ]
+            )
+        }
+
+        let initialSnapshot = diagnosticsSnapshotPayload()
+        let usedExistingCapture = isRunning
+        let usedExistingStream = includeStream && streamIsActive
+        var startedLocalStream = false
+        var startedLocalCapture = false
+
+        if includeStream, !usedExistingStream {
+            guard await connectStreamForDiagnostics() else {
+                return (
+                    false,
+                    [
+                        "error": NetworkError.invalidBaseURL.localizedDescription ?? "Invalid base URL.",
+                        "requested_mode": requestedMode.rawValue,
+                        "initial_snapshot": initialSnapshot,
+                    ]
+                )
+            }
+            startedLocalStream = true
+        }
+
+        if !usedExistingCapture {
+            do {
+                try await audioCapture.start(mode: requestedMode)
+                startedLocalCapture = true
+            } catch {
+                if startedLocalStream {
+                    await streamClient.disconnect()
+                }
+                return (
+                    false,
+                    [
+                        "error": error.localizedDescription,
+                        "requested_mode": requestedMode.rawValue,
+                        "initial_snapshot": initialSnapshot,
+                        "final_snapshot": diagnosticsSnapshotPayload(),
+                    ]
+                )
+            }
+        }
+
+        let settledSnapshot = diagnosticsSnapshotPayload()
+        try? await Task.sleep(for: .milliseconds(max(250, rebuildDelayMs)))
+        let rebuildSucceeded = await audioCapture.forceDiagnosticRebuild(reason: "remote capture rebuild probe")
+        let postRebuildSnapshot = diagnosticsSnapshotPayload()
+        let observation = await observeProbe(durationMs: max(1_000, durationMs - rebuildDelayMs))
+        let finalSnapshot = diagnosticsSnapshotPayload()
+        let stageChecks = capturePipelineStageChecks(
+            initialSnapshot: postRebuildSnapshot,
+            finalSnapshot: finalSnapshot,
+            observation: observation
+        )
+
+        if startedLocalCapture {
+            audioCapture.stop()
+        }
+        if startedLocalStream {
+            await streamClient.disconnect()
+        }
+
+        return (
+            rebuildSucceeded && ((stageChecks["tap_callbacks_seen"] as? Bool ?? false) || (stageChecks["converted_frames_seen"] as? Bool ?? false)),
+            [
+                "duration_ms": durationMs,
+                "rebuild_delay_ms": rebuildDelayMs,
+                "requested_mode": requestedMode.rawValue,
+                "include_stream": includeStream,
+                "used_existing_capture": usedExistingCapture,
+                "used_existing_stream": usedExistingStream,
+                "started_local_capture": startedLocalCapture,
+                "started_local_stream": startedLocalStream,
+                "rebuild_succeeded": rebuildSucceeded,
+                "initial_snapshot": initialSnapshot,
+                "settled_snapshot": settledSnapshot,
+                "post_rebuild_snapshot": postRebuildSnapshot,
+                "probe_observation": observation,
+                "stage_checks": stageChecks,
+                "final_snapshot": finalSnapshot,
+            ]
+        )
+    }
+
+    private func runCaptureModeMatrixProbe(
+        perModeDurationMs: Int,
+        includeStream: Bool
+    ) async -> (success: Bool, payload: [String: Any]) {
+        if isRunning || streamIsActive {
+            return (
+                false,
+                [
+                    "error": "Stop the current test before running the capture mode matrix probe.",
+                    "initial_snapshot": diagnosticsSnapshotPayload(),
+                ]
+            )
+        }
+
+        let initialSnapshot = diagnosticsSnapshotPayload()
+        var results: [[String: Any]] = []
+        var anyExecuted = false
+
+        for mode in CaptureMode.allCases {
+            let probe = await runCapturePipelineProbe(
+                durationMs: perModeDurationMs,
+                captureMode: mode,
+                includeStream: includeStream
+            )
+            results.append([
+                "capture_mode": mode.rawValue,
+                "success": probe.success,
+                "payload": probe.payload,
+            ])
+            anyExecuted = true
+        }
+
+        return (
+            anyExecuted,
+            [
+                "per_mode_duration_ms": perModeDurationMs,
+                "include_stream": includeStream,
+                "initial_snapshot": initialSnapshot,
+                "mode_results": results,
+                "final_snapshot": diagnosticsSnapshotPayload(),
+            ]
+        )
+    }
+
     private func observeProbe(durationMs: Int) async -> [String: Any] {
         let sampleCount = max(1, min(20, durationMs / 250))
         let startBatches = diagnostics.batchesSent
         let startInterpreter = interpreterProbeSnapshot()
+        let startTapCallbacks = diagnostics.tapCallbackCount
+        let startConvertedFrames = diagnostics.convertedFrameCount
+        let startProcessingInvocations = diagnostics.processingInvocationCount
+        let startPendingHighWater = diagnostics.pendingSampleHighWaterMark
+        let startRestarts = diagnostics.captureRestartCount
         let startDate = Date()
         var peakRms = diagnostics.rmsLevel
         var peakNoiseFloor = diagnostics.noiseFloor
@@ -676,6 +964,15 @@ final class TranslationTestViewModel {
                 "translation_event_count": translationEventCount,
                 "display_event_count": displayEventCount,
                 "session_start_count": sessionStartCount,
+                "tap_callback_count": diagnostics.tapCallbackCount,
+                "tap_frame_count": diagnostics.tapFrameCount,
+                "processing_invocation_count": diagnostics.processingInvocationCount,
+                "conversion_success_count": diagnostics.conversionSuccessCount,
+                "converted_frame_count": diagnostics.convertedFrameCount,
+                "zero_frame_conversion_count": diagnostics.zeroFrameConversionCount,
+                "pending_sample_count": diagnostics.pendingSampleCount,
+                "pending_sample_high_water_mark": diagnostics.pendingSampleHighWaterMark,
+                "capture_restart_count": diagnostics.captureRestartCount,
             ])
         }
 
@@ -695,6 +992,11 @@ final class TranslationTestViewModel {
                 "display_event_count_delta": finalInterpreter.displayEventCount - startInterpreter.displayEventCount,
                 "translation_event_count_delta": finalInterpreter.translationEventCount - startInterpreter.translationEventCount,
                 "session_start_count_delta": finalInterpreter.sessionStartCount - startInterpreter.sessionStartCount,
+                "tap_callback_count_delta": diagnostics.tapCallbackCount - startTapCallbacks,
+                "processing_invocation_count_delta": diagnostics.processingInvocationCount - startProcessingInvocations,
+                "converted_frame_count_delta": diagnostics.convertedFrameCount - startConvertedFrames,
+                "pending_sample_high_water_mark_delta": diagnostics.pendingSampleHighWaterMark - startPendingHighWater,
+                "capture_restart_count_delta": diagnostics.captureRestartCount - startRestarts,
                 "stream_status": streamStatus.rawValue,
                 "display_connected": displayConnected,
                 "latest_error": latestError,
@@ -744,6 +1046,22 @@ final class TranslationTestViewModel {
                 "echo_cancelled_input_enabled": diagnostics.echoCancelledInputEnabled,
                 "microphone_permission_granted": diagnostics.microphonePermissionGranted,
                 "engine_running": diagnostics.engineRunning,
+                "tap_callback_count": diagnostics.tapCallbackCount,
+                "tap_frame_count": diagnostics.tapFrameCount,
+                "last_tap_at": jsonValue(diagnostics.lastTapAt?.ISO8601Format()),
+                "copy_mono_success_count": diagnostics.copyMonoSuccessCount,
+                "copy_mono_failure_count": diagnostics.copyMonoFailureCount,
+                "processing_invocation_count": diagnostics.processingInvocationCount,
+                "conversion_success_count": diagnostics.conversionSuccessCount,
+                "conversion_failure_count": diagnostics.conversionFailureCount,
+                "zero_frame_conversion_count": diagnostics.zeroFrameConversionCount,
+                "converted_frame_count": diagnostics.convertedFrameCount,
+                "last_converted_at": jsonValue(diagnostics.lastConvertedAt?.ISO8601Format()),
+                "pending_sample_count": diagnostics.pendingSampleCount,
+                "pending_sample_high_water_mark": diagnostics.pendingSampleHighWaterMark,
+                "capture_restart_count": diagnostics.captureRestartCount,
+                "last_restart_at": jsonValue(diagnostics.lastRestartAt?.ISO8601Format()),
+                "last_restart_reason": diagnostics.lastRestartReason,
             ],
             "interpreter": [
                 "audio_chunks_observed": audioChunksObserved,
@@ -855,6 +1173,47 @@ final class TranslationTestViewModel {
             return int
         }
         return defaultValue
+    }
+
+    private func boolValue(_ value: Any?, default defaultValue: Bool) -> Bool {
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+        if let string = value as? String {
+            switch string.lowercased() {
+            case "true", "1", "yes", "y", "on":
+                return true
+            case "false", "0", "no", "n", "off":
+                return false
+            default:
+                break
+            }
+        }
+        return defaultValue
+    }
+
+    private func captureModeValue(_ value: Any?) -> CaptureMode? {
+        guard let string = value as? String else { return nil }
+        let normalized = string
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .lowercased()
+
+        switch normalized {
+        case "voiceprocessing", "voice":
+            return .voiceProcessing
+        case "echocancelled", "echo":
+            return .echoCancelled
+        case "rawdebug", "raw":
+            return .rawDebug
+        default:
+            return CaptureMode(rawValue: string)
+        }
     }
 
     private func jsonValue(_ value: Any?) -> Any {
@@ -1036,6 +1395,85 @@ final class TranslationTestViewModel {
             translationEventCount: translationEventCount,
             sessionStartCount: sessionStartCount
         )
+    }
+
+    private var streamIsActive: Bool {
+        isRunning || streamStatus == .connected || streamStatus == .connecting || streamStatus == .reconnecting
+    }
+
+    private func connectStreamForDiagnostics() async -> Bool {
+        guard let wsBaseURL = settings.webSocketBaseURL else { return false }
+        let configuration = StreamSocketClient.StreamConfiguration(
+            url: wsBaseURL,
+            churchID: settings.churchID,
+            sampleRate: 16_000,
+            sourceScriptureVersion: settings.sourceScriptureVersion,
+            displayScriptureVersion: settings.displayScriptureVersion
+        )
+        await streamClient.connect(configuration: configuration)
+        try? await Task.sleep(for: .milliseconds(500))
+        return true
+    }
+
+    private func capturePipelineStageChecks(
+        initialSnapshot: [String: Any],
+        finalSnapshot: [String: Any],
+        observation: [String: Any]
+    ) -> [String: Any] {
+        let initialAudio = initialSnapshot["audio"] as? [String: Any]
+        let finalAudio = finalSnapshot["audio"] as? [String: Any]
+        let summary = observation["diagnostics_summary"] as? [String: Any]
+
+        let tapCallbacksDelta = ((finalAudio?["tap_callback_count"] as? Int) ?? 0) - ((initialAudio?["tap_callback_count"] as? Int) ?? 0)
+        let processingDelta = ((finalAudio?["processing_invocation_count"] as? Int) ?? 0) - ((initialAudio?["processing_invocation_count"] as? Int) ?? 0)
+        let conversionDelta = ((finalAudio?["conversion_success_count"] as? Int) ?? 0) - ((initialAudio?["conversion_success_count"] as? Int) ?? 0)
+        let convertedFramesDelta = ((finalAudio?["converted_frame_count"] as? Int) ?? 0) - ((initialAudio?["converted_frame_count"] as? Int) ?? 0)
+        let zeroFrameDelta = ((finalAudio?["zero_frame_conversion_count"] as? Int) ?? 0) - ((initialAudio?["zero_frame_conversion_count"] as? Int) ?? 0)
+        let pendingHighWaterDelta = ((finalAudio?["pending_sample_high_water_mark"] as? Int) ?? 0) - ((initialAudio?["pending_sample_high_water_mark"] as? Int) ?? 0)
+        let chunksObservedDelta = (summary?["audio_chunks_observed_delta"] as? Int) ?? 0
+        let chunksSentDelta = (summary?["audio_chunks_sent_delta"] as? Int) ?? 0
+        let batchesDelta = (summary?["batches_sent_delta"] as? Int) ?? 0
+
+        let likelyFailureStage: String
+        if tapCallbacksDelta == 0 {
+            likelyFailureStage = "input_tap"
+        } else if processingDelta == 0 {
+            likelyFailureStage = "processing_queue"
+        } else if conversionDelta == 0 && zeroFrameDelta > 0 {
+            likelyFailureStage = "converter_zero_frames"
+        } else if conversionDelta == 0 {
+            likelyFailureStage = "converter"
+        } else if pendingHighWaterDelta == 0 && batchesDelta == 0 {
+            likelyFailureStage = "pending_buffer"
+        } else if chunksObservedDelta == 0 {
+            likelyFailureStage = "chunk_emission"
+        } else if chunksSentDelta == 0 {
+            likelyFailureStage = "socket_send"
+        } else {
+            likelyFailureStage = "none"
+        }
+
+        return [
+            "tap_callbacks_seen": tapCallbacksDelta > 0,
+            "processing_seen": processingDelta > 0,
+            "converted_frames_seen": convertedFramesDelta > 0,
+            "zero_frame_conversions_seen": zeroFrameDelta > 0,
+            "pending_samples_accumulated": pendingHighWaterDelta > 0,
+            "audio_chunks_observed": chunksObservedDelta > 0,
+            "audio_chunks_sent": chunksSentDelta > 0,
+            "batches_emitted": batchesDelta > 0,
+            "tap_callback_count_delta": tapCallbacksDelta,
+            "processing_invocation_count_delta": processingDelta,
+            "conversion_success_count_delta": conversionDelta,
+            "converted_frame_count_delta": convertedFramesDelta,
+            "zero_frame_conversion_count_delta": zeroFrameDelta,
+            "pending_sample_high_water_mark_delta": pendingHighWaterDelta,
+            "likely_failure_stage": likelyFailureStage,
+            "last_tap_at": finalAudio?["last_tap_at"] ?? NSNull(),
+            "last_converted_at": finalAudio?["last_converted_at"] ?? NSNull(),
+            "last_restart_at": finalAudio?["last_restart_at"] ?? NSNull(),
+            "last_restart_reason": finalAudio?["last_restart_reason"] ?? "",
+        ]
     }
 
     private func personalInterpreterStageChecks(

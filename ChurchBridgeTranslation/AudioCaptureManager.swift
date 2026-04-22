@@ -48,6 +48,7 @@ final class AudioCaptureManager: NSObject {
         }
 
         let effectiveMode = resolveEffectiveMode(requestedMode: mode)
+        resetStageDiagnostics()
         currentMode = effectiveMode
         currentRequestedMode = mode
         try configureSession(for: effectiveMode)
@@ -76,6 +77,7 @@ final class AudioCaptureManager: NSObject {
         diagnostics.speechDetected = false
         diagnostics.rmsLevel = 0
         diagnostics.clipping = false
+        diagnostics.pendingSampleCount = 0
         publishDiagnostics()
 
         do {
@@ -191,6 +193,7 @@ final class AudioCaptureManager: NSObject {
         diagnostics.noiseFloor = 0
         diagnostics.clipping = false
         diagnostics.speechDetected = false
+        diagnostics.pendingSampleCount = 0
 
         let tapBufferSize = max(AVAudioFrameCount((hardwareFormat.sampleRate * 0.02).rounded()), 256)
         inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hardwareFormat) { [weak self] buffer, _ in
@@ -199,13 +202,22 @@ final class AudioCaptureManager: NSObject {
     }
 
     private func captureBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard let copiedSamples = copyMonoSamples(from: buffer) else { return }
+        diagnostics.tapCallbackCount += 1
+        diagnostics.tapFrameCount += Int(buffer.frameLength)
+        diagnostics.lastTapAt = Date()
+        guard let copiedSamples = copyMonoSamples(from: buffer) else {
+            diagnostics.copyMonoFailureCount += 1
+            publishDiagnostics()
+            return
+        }
+        diagnostics.copyMonoSuccessCount += 1
         processingQueue.async { [weak self] in
             self?.process(samples: copiedSamples)
         }
     }
 
     private func process(samples: [Float]) {
+        diagnostics.processingInvocationCount += 1
         guard
             let hardwareInputFormat,
             let converter,
@@ -236,21 +248,32 @@ final class AudioCaptureManager: NSObject {
         }
 
         if let conversionError {
+            diagnostics.conversionFailureCount += 1
             emitError("Audio convert failed: \(conversionError.localizedDescription)")
             return
         }
 
         guard status != .error, let channelData = outputBuffer.floatChannelData?[0] else { return }
         let frameCount = Int(outputBuffer.frameLength)
-        guard frameCount > 0 else { return }
+        guard frameCount > 0 else {
+            diagnostics.zeroFrameConversionCount += 1
+            publishDiagnostics()
+            return
+        }
 
+        diagnostics.conversionSuccessCount += 1
+        diagnostics.convertedFrameCount += frameCount
+        diagnostics.lastConvertedAt = Date()
         let convertedSamples = Array(UnsafeBufferPointer(start: channelData, count: frameCount))
         updateLevels(from: convertedSamples)
         pendingSamples.append(contentsOf: convertedSamples)
+        diagnostics.pendingSampleCount = pendingSamples.count
+        diagnostics.pendingSampleHighWaterMark = max(diagnostics.pendingSampleHighWaterMark, pendingSamples.count)
 
         while pendingSamples.count >= chunkSamples {
             let chunk = Array(pendingSamples.prefix(chunkSamples))
             pendingSamples.removeFirst(chunkSamples)
+            diagnostics.pendingSampleCount = pendingSamples.count
             let base64 = chunk.withUnsafeBufferPointer { pointer in
                 Data(buffer: pointer).base64EncodedString()
             }
@@ -428,10 +451,13 @@ final class AudioCaptureManager: NSObject {
         }
     }
 
-    private func reconfigureCaptureGraph(reason: String) {
+    private func reconfigureCaptureGraph(reason: String, completion: ((Bool) -> Void)? = nil) {
         guard isRunning, !isReconfiguring else { return }
         guard let mode = currentMode, let requestedMode = currentRequestedMode else { return }
 
+        diagnostics.captureRestartCount += 1
+        diagnostics.lastRestartAt = Date()
+        diagnostics.lastRestartReason = reason
         isReconfiguring = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -445,8 +471,19 @@ final class AudioCaptureManager: NSObject {
                 self.diagnostics.engineRunning = self.engine.isRunning
                 self.refreshRouteDiagnostics()
                 self.publishDiagnostics()
+                completion?(true)
             } catch {
                 self.emitError("Audio capture reconfiguration failed after \(reason): \(error.localizedDescription)")
+                completion?(false)
+            }
+        }
+    }
+
+    func forceDiagnosticRebuild(reason: String = "diagnostics probe") async -> Bool {
+        guard isRunning, !isReconfiguring, currentMode != nil, currentRequestedMode != nil else { return false }
+        return await withCheckedContinuation { continuation in
+            reconfigureCaptureGraph(reason: reason) { success in
+                continuation.resume(returning: success)
             }
         }
     }
@@ -458,5 +495,25 @@ final class AudioCaptureManager: NSObject {
         } else {
             processingQueue.sync(execute: clear)
         }
+        diagnostics.pendingSampleCount = 0
+    }
+
+    private func resetStageDiagnostics() {
+        diagnostics.tapCallbackCount = 0
+        diagnostics.tapFrameCount = 0
+        diagnostics.lastTapAt = nil
+        diagnostics.copyMonoSuccessCount = 0
+        diagnostics.copyMonoFailureCount = 0
+        diagnostics.processingInvocationCount = 0
+        diagnostics.conversionSuccessCount = 0
+        diagnostics.conversionFailureCount = 0
+        diagnostics.zeroFrameConversionCount = 0
+        diagnostics.convertedFrameCount = 0
+        diagnostics.lastConvertedAt = nil
+        diagnostics.pendingSampleCount = 0
+        diagnostics.pendingSampleHighWaterMark = 0
+        diagnostics.captureRestartCount = 0
+        diagnostics.lastRestartAt = nil
+        diagnostics.lastRestartReason = ""
     }
 }
