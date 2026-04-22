@@ -6,19 +6,17 @@ struct TranslationTestView: View {
     @State private var scrollToLiveRequested = 0
     @State private var userPinnedToLive = true
     @State private var showDiagnostics = false
+    @State private var showAbout = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 background
 
-                VStack(spacing: 14) {
-                    controlBar
-                    if isLive {
-                        liveFeed
-                    } else {
-                        idleCard
-                    }
+                if isLive {
+                    liveFeed
+                } else {
+                    idleCard
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 18)
@@ -26,20 +24,50 @@ struct TranslationTestView: View {
             .navigationTitle("Interpreter")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        showDiagnostics = true
-                    } label: {
-                        Image(systemName: "waveform.path.ecg")
-                    }
-                    .tint(.white)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            Task {
+                                if viewModel.isRunning {
+                                    await viewModel.stop()
+                                } else {
+                                    await viewModel.start()
+                                }
+                            }
+                        } label: {
+                            Label(viewModel.isRunning ? "Stop Listening" : "Start Listening", systemImage: viewModel.isRunning ? "stop.fill" : "play.fill")
+                        }
 
-                    Button {
-                        viewModel.showSettings = true
+                        Button {
+                            Task { await viewModel.restartDisplayConnection() }
+                        } label: {
+                            Label("Reconnect Feed", systemImage: "arrow.clockwise")
+                        }
+
+                        Divider()
+
+                        Button {
+                            showDiagnostics = true
+                        } label: {
+                            Label("Diagnostics", systemImage: "waveform.path.ecg")
+                        }
+
+                        Button {
+                            viewModel.showSettings = true
+                        } label: {
+                            Label("Advanced Settings", systemImage: "gearshape.fill")
+                        }
+
+                        Button {
+                            showAbout = true
+                        } label: {
+                            Label("About", systemImage: "info.circle")
+                        }
                     } label: {
-                        Image(systemName: "gearshape.fill")
+                        Image(systemName: "ellipsis.circle.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.white)
                     }
-                    .tint(.white)
                 }
             }
             .sheet(isPresented: $viewModel.showSettings) {
@@ -49,6 +77,10 @@ struct TranslationTestView: View {
             .sheet(isPresented: $showDiagnostics) {
                 DiagnosticsSheet(viewModel: viewModel)
                     .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showAbout) {
+                AboutSheet()
+                    .presentationDetents([.medium])
             }
             .sheet(item: $selectedSegment) { segment in
                 VerseSheet(segment: segment, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID)
@@ -82,81 +114,24 @@ struct TranslationTestView: View {
         }
     }
 
-    private var controlBar: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(viewModel.settings.churchID)
-                        .font(.system(.headline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text(viewModel.isRunning ? "Listening for live translation" : "Ready to start listening")
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.72))
-                }
-
-                Spacer()
-                statusPill
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    Task {
-                        if viewModel.isRunning {
-                            await viewModel.stop()
-                        } else {
-                            await viewModel.start()
-                        }
-                    }
-                } label: {
-                    Label(viewModel.isRunning ? "Stop" : "Start", systemImage: viewModel.isRunning ? "stop.fill" : "play.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(ActionButtonStyle(fill: viewModel.isRunning ? .red : .green))
-
-                if !viewModel.displayConnected || viewModel.streamStatus == .failed {
-                    Button {
-                        Task { await viewModel.restartDisplayConnection() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(ActionButtonStyle(fill: .white.opacity(0.10), foreground: .white))
-                }
-            }
-
-            HStack(spacing: 8) {
-                metricChip(title: "Feed", value: viewModel.displayConnected ? "Connected" : "Reconnecting", color: viewModel.displayConnected ? .green : .orange)
-                metricChip(title: "Audio", value: viewModel.diagnostics.speechDetected ? "Active" : "Listening", color: viewModel.diagnostics.speechDetected ? .green : .blue)
-                if viewModel.diagnostics.clipping {
-                    metricChip(title: "Input", value: "Clipping", color: .red)
-                }
-            }
-
-            if !viewModel.latestError.isEmpty {
-                Text(viewModel.latestError)
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(Color(red: 1.0, green: 0.72, blue: 0.72))
-            }
-        }
-        .padding(16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1))
-    }
-
     private var idleCard: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Personal interpreter, built for reading")
+            Text("Hear the sermon. Feel the message.")
                 .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
 
-            Text("The live screen keeps the focus on translated text. Advanced diagnostics and configuration stay behind the small icons in the top-right corner.")
+            Text("ChurchBridge listens to live Spanish audio and writes the English translation in real time, helping carry the emotion, emphasis, and meaning of the sermon across languages.")
                 .font(.system(.body, design: .rounded))
                 .foregroundStyle(.white.opacity(0.78))
 
+            Text("When the message points to scripture, ChurchBridge adds verse pills so you can open the explanation, compare the passage in both languages, and continue reading the Bible from that exact place.")
+                .font(.system(.body, design: .rounded))
+                .foregroundStyle(.white.opacity(0.72))
+
             VStack(alignment: .leading, spacing: 10) {
-                featureRow(icon: "captions.bubble.fill", title: "Caption-first layout", detail: "English stays prominent, with the original Spanish tucked underneath.")
-                featureRow(icon: "book.closed.fill", title: "Bilingual scripture reader", detail: "Verse pills open explanation plus passages in both languages.")
-                featureRow(icon: "rectangle.expand.vertical", title: "Expandable chapter reading", detail: "Read beyond the quoted range without leaving the app.")
+                featureRow(icon: "circle.fill", iconColor: .orange, title: "Orange pill", detail: "The sermon is likely quoting this verse.")
+                featureRow(icon: "circle.fill", iconColor: .blue, title: "Blue pill", detail: "A related passage may deepen the moment.")
+                featureRow(icon: "ellipsis.circle.fill", iconColor: Color(red: 0.70, green: 0.90, blue: 0.84), title: "Menu", detail: "Start listening, reconnect, or open more details.")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -169,6 +144,8 @@ struct TranslationTestView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    liveStatusStrip
+
                     if viewModel.displayFeed.snapshot.segments.isEmpty, activeSpanish.isEmpty, viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
                         waitingCard
                     }
@@ -180,10 +157,6 @@ struct TranslationTestView: View {
                             }
                         } label: {
                             VStack(alignment: .leading, spacing: 14) {
-                                if segment.verseDetected != nil || !segment.verseSuggestions.isEmpty {
-                                    versePillRow(for: segment)
-                                }
-
                                 Text(segment.english)
                                     .font(.system(size: 28, weight: .semibold, design: .rounded))
                                     .foregroundStyle(segment.id == viewModel.displayFeed.snapshot.flashingID ? Color(red: 0.84, green: 0.94, blue: 1.0) : .white)
@@ -195,6 +168,10 @@ struct TranslationTestView: View {
                                     .foregroundStyle(.white.opacity(0.58))
                                     .multilineTextAlignment(.leading)
                                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                                if segment.verseDetected != nil || !segment.verseSuggestions.isEmpty {
+                                    versePillRow(for: segment)
+                                }
                             }
                             .padding(20)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -243,6 +220,21 @@ struct TranslationTestView: View {
         }
     }
 
+    private var liveStatusStrip: some View {
+        HStack(spacing: 8) {
+            statusPill
+            metricChip(title: "Feed", value: viewModel.displayConnected ? "Connected" : "Reconnecting", color: viewModel.displayConnected ? .green : .orange)
+            if !viewModel.latestError.isEmpty {
+                Text(viewModel.latestError)
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(Color(red: 1.0, green: 0.72, blue: 0.72))
+                    .lineLimit(2)
+            } else if viewModel.diagnostics.clipping {
+                metricChip(title: "Input", value: "Clipping", color: .red)
+            }
+        }
+    }
+
     private var waitingCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Waiting for speech")
@@ -279,10 +271,10 @@ struct TranslationTestView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 if let verse = segment.verseDetected {
-                    verseTag(title: verse.reference, subtitle: "Detected", tint: .orange)
+                    verseTag(title: verse.reference, tint: .orange)
                 }
                 ForEach(segment.verseSuggestions, id: \.reference) { suggestion in
-                    verseTag(title: suggestion.reference, subtitle: "Suggested", tint: .blue)
+                    verseTag(title: suggestion.reference, tint: .blue)
                 }
             }
         }
@@ -325,22 +317,20 @@ struct TranslationTestView: View {
         .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private func verseTag(title: String, subtitle: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.system(.caption, design: .rounded, weight: .bold))
-            Text(subtitle.uppercased()).font(.system(size: 9, weight: .bold, design: .rounded))
-        }
+    private func verseTag(title: String, tint: Color) -> some View {
+        Text(title)
+            .font(.system(.caption, design: .rounded, weight: .bold))
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
         .background(tint.opacity(0.14), in: Capsule())
         .foregroundStyle(tint)
     }
 
-    private func featureRow(icon: String, title: String, detail: String) -> some View {
+    private func featureRow(icon: String, iconColor: Color, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(Color(red: 0.70, green: 0.90, blue: 0.84))
+                .foregroundStyle(iconColor)
                 .frame(width: 26)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(.headline, design: .rounded, weight: .semibold)).foregroundStyle(.white)
@@ -372,17 +362,34 @@ struct TranslationTestView: View {
     }
 }
 
-private struct ActionButtonStyle: ButtonStyle {
-    var fill: Color
-    var foreground: Color = .white
+private struct AboutSheet: View {
+    @Environment(\.dismiss) private var dismiss
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(.headline, design: .rounded, weight: .bold))
-            .padding(.vertical, 14)
-            .padding(.horizontal, 18)
-            .background(fill.opacity(configuration.isPressed ? 0.75 : 1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .foregroundStyle(foreground)
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("What ChurchBridge does") {
+                    Text("ChurchBridge is more than a translator. It helps carry the emotion, emphasis, and meaning of a live sermon across languages while you read along.")
+                    Text("As the speaker talks, the app writes the English translation in real time and enriches key moments with likely scripture references.")
+                }
+
+                Section("Verse pills") {
+                    Text("Orange pills mark the verse most likely being quoted or directly referenced.")
+                    Text("Blue pills mark nearby passages that may help you follow the message more deeply.")
+                }
+
+                Section("Reading scripture") {
+                    Text("Tap any pill to see the explanation and compare the passage in Spanish and English.")
+                    Text("From there, open the full Bible at that exact verse and keep reading forward.")
+                }
+            }
+            .navigationTitle("About")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 
@@ -490,7 +497,7 @@ private struct DiagnosticsSheet: View {
 }
 
 private struct VerseSheetItem: Identifiable, Equatable {
-    enum Kind {
+    enum Kind: Equatable {
         case detected
         case suggested
     }
@@ -518,8 +525,9 @@ private struct ChapterReaderRequest: Identifiable, Equatable {
     let versionName: String
     let book: String
     let chapter: Int
+    let highlightVerse: Int?
 
-    var id: String { "\(versionSlug)-\(book)-\(chapter)" }
+    var id: String { "\(versionSlug)-\(book)-\(chapter)-\(highlightVerse ?? 0)" }
 }
 
 private struct VerseSheet: View {
@@ -575,6 +583,10 @@ private struct VerseSheet: View {
                                 accent: .blue
                             )
                         }
+
+                        if selectedItem.sourcePassage == nil, selectedItem.displayPassage == nil {
+                            unavailablePassageCard
+                        }
                     }
                 }
                 .padding(16)
@@ -628,15 +640,12 @@ private struct VerseSheet: View {
                     Button {
                         selectedItemID = item.id
                     } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.reference)
-                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                            Text(item.badgeText.uppercased())
-                                .font(.system(size: 10, weight: .bold, design: .rounded))
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(selectedItemID == item.id ? Color.accentColor.opacity(0.18) : Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        Text(item.reference)
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(chipFill(for: item), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .foregroundStyle(chipForeground(for: item))
                     }
                     .buttonStyle(.plain)
                 }
@@ -646,14 +655,12 @@ private struct VerseSheet: View {
 
     private func heroCard(for item: VerseSheetItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(item.badgeText.uppercased())
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(.secondary)
             Text(item.reference)
                 .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(.primary)
             Text(item.explanation)
                 .font(.system(.body, design: .rounded))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary.opacity(0.75))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -669,6 +676,7 @@ private struct VerseSheet: View {
                         .foregroundStyle(accent)
                     Text(title)
                         .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
                     Text(passage.reference)
                         .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(.secondary)
@@ -676,18 +684,23 @@ private struct VerseSheet: View {
 
                 Spacer()
 
-                Button("Read \(passage.book) \(passage.chapter)") {
+                Button("Open in Bible") {
                     chapterRequest = ChapterReaderRequest(
                         versionSlug: passage.version.slug,
                         versionName: passage.version.name,
                         book: passage.book,
-                        chapter: passage.chapter
+                        chapter: passage.chapter,
+                        highlightVerse: passage.verseStart
                     )
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .tint(accent)
             }
+
+            Text("Continue reading from \(passage.reference) in \(languageLabel).")
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(passage.verses, id: \.reference) { verse in
@@ -698,6 +711,7 @@ private struct VerseSheet: View {
                             .frame(width: 28, alignment: .leading)
                         Text(verse.text)
                             .font(.system(.body, design: .rounded))
+                            .foregroundStyle(.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
@@ -707,6 +721,29 @@ private struct VerseSheet: View {
         .padding(18)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
+
+    private var unavailablePassageCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Passage text is still loading")
+                .font(.system(.headline, design: .rounded, weight: .semibold))
+                .foregroundStyle(.primary)
+            Text("The reference and explanation are available, but the full passage text has not arrived yet. Try reopening this verse in a moment.")
+                .font(.system(.body, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func chipFill(for item: VerseSheetItem) -> Color {
+        let tint: Color = item.kind == .detected ? .orange : .blue
+        return selectedItemID == item.id ? tint.opacity(0.18) : .white
+    }
+
+    private func chipForeground(for item: VerseSheetItem) -> Color {
+        selectedItemID == item.id ? (item.kind == .detected ? .orange : .blue) : .primary
+    }
 }
 
 private struct ChapterReaderSheet: View {
@@ -715,41 +752,71 @@ private struct ChapterReaderSheet: View {
     let churchID: String
 
     @Environment(\.dismiss) private var dismiss
+    @State private var currentRequest: ChapterReaderRequest
     @State private var chapter: ScriptureChapter?
+    @State private var books: [BibleBook] = []
     @State private var errorMessage = ""
     @State private var isLoading = true
 
     private let service = BibleVersionService()
 
+    init(request: ChapterReaderRequest, baseURL: URL?, churchID: String) {
+        self.request = request
+        self.baseURL = baseURL
+        self.churchID = churchID
+        _currentRequest = State(initialValue: request)
+    }
+
     var body: some View {
         NavigationStack {
             Group {
                 if isLoading {
-                    ProgressView("Loading \(request.book) \(request.chapter)…")
+                    ProgressView("Loading \(currentRequest.book) \(currentRequest.chapter)...")
                 } else if let chapter {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(chapter.reference)
-                                    .font(.system(.title2, design: .rounded, weight: .bold))
-                                Text(chapter.version.name)
-                                    .font(.system(.subheadline, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                            }
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 18) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(chapter.reference)
+                                        .font(.system(.title2, design: .rounded, weight: .bold))
+                                        .foregroundStyle(.primary)
+                                    Text(chapter.version.name)
+                                        .font(.system(.subheadline, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                    if let highlightVerse = currentRequest.highlightVerse {
+                                        Text("Opened at verse \(highlightVerse)")
+                                            .font(.system(.footnote, design: .rounded, weight: .semibold))
+                                            .foregroundStyle(Color.accentColor)
+                                    }
+                                }
 
-                            ForEach(chapter.verses, id: \.reference) { verse in
-                                HStack(alignment: .top, spacing: 12) {
-                                    Text("\(verse.verse)")
-                                        .font(.system(.headline, design: .rounded, weight: .bold))
-                                        .foregroundStyle(Color.accentColor)
-                                        .frame(width: 30, alignment: .leading)
-                                    Text(verse.text)
-                                        .font(.system(.body, design: .rounded))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                chapterNavigation
+
+                                ForEach(chapter.verses, id: \.reference) { verse in
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Text("\(verse.verse)")
+                                            .font(.system(.headline, design: .rounded, weight: .bold))
+                                            .foregroundStyle(verse.verse == currentRequest.highlightVerse ? Color.accentColor : .secondary)
+                                            .frame(width: 30, alignment: .leading)
+                                        Text(verse.text)
+                                            .font(.system(.body, design: .rounded))
+                                            .foregroundStyle(.primary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                    .background(verse.verse == currentRequest.highlightVerse ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .id(verse.reference)
                                 }
                             }
+                            .padding(16)
                         }
-                        .padding(16)
+                        .onAppear {
+                            scrollToHighlight(using: proxy)
+                        }
+                        .onChange(of: currentRequest.id) { _, _ in
+                            scrollToHighlight(using: proxy)
+                        }
                     }
                 } else {
                     ContentUnavailableView(
@@ -762,7 +829,7 @@ private struct ChapterReaderSheet: View {
             .task {
                 await loadChapter()
             }
-            .navigationTitle("Reader")
+            .navigationTitle("Bible")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
@@ -779,6 +846,83 @@ private struct ChapterReaderSheet: View {
         }
 
         do {
+            books = try await service.fetchBooks(
+                baseURL: baseURL,
+                churchID: churchID,
+                versionSlug: currentRequest.versionSlug
+            )
+            chapter = try await service.fetchChapter(
+                baseURL: baseURL,
+                churchID: churchID,
+                versionSlug: currentRequest.versionSlug,
+                book: currentRequest.book,
+                chapter: currentRequest.chapter
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private var chapterNavigation: some View {
+        HStack(spacing: 12) {
+            Button {
+                Task { await moveChapter(by: -1) }
+            } label: {
+                Label("Previous", systemImage: "chevron.left")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(previousChapterRequest == nil)
+
+            Button {
+                Task { await moveChapter(by: 1) }
+            } label: {
+                Label("Next", systemImage: "chevron.right")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(nextChapterRequest == nil)
+        }
+    }
+
+    private var currentBookIndex: Int? {
+        books.firstIndex(where: { $0.bookName == currentRequest.book })
+    }
+
+    private var previousChapterRequest: ChapterReaderRequest? {
+        guard let currentBookIndex else { return nil }
+        if currentRequest.chapter > 1 {
+            return ChapterReaderRequest(versionSlug: currentRequest.versionSlug, versionName: currentRequest.versionName, book: currentRequest.book, chapter: currentRequest.chapter - 1, highlightVerse: nil)
+        }
+        guard currentBookIndex > 0 else { return nil }
+        let previousBook = books[currentBookIndex - 1]
+        return ChapterReaderRequest(versionSlug: currentRequest.versionSlug, versionName: currentRequest.versionName, book: previousBook.bookName, chapter: previousBook.chapterCount, highlightVerse: nil)
+    }
+
+    private var nextChapterRequest: ChapterReaderRequest? {
+        guard let currentBookIndex else { return nil }
+        let currentBook = books[currentBookIndex]
+        if currentRequest.chapter < currentBook.chapterCount {
+            return ChapterReaderRequest(versionSlug: currentRequest.versionSlug, versionName: currentRequest.versionName, book: currentRequest.book, chapter: currentRequest.chapter + 1, highlightVerse: nil)
+        }
+        guard currentBookIndex + 1 < books.count else { return nil }
+        let nextBook = books[currentBookIndex + 1]
+        return ChapterReaderRequest(versionSlug: currentRequest.versionSlug, versionName: currentRequest.versionName, book: nextBook.bookName, chapter: 1, highlightVerse: nil)
+    }
+
+    private func moveChapter(by direction: Int) async {
+        let nextRequest = direction < 0 ? previousChapterRequest : nextChapterRequest
+        guard let nextRequest else { return }
+        await loadChapter(for: nextRequest)
+    }
+
+    private func loadChapter(for request: ChapterReaderRequest) async {
+        guard let baseURL else { return }
+        isLoading = true
+        errorMessage = ""
+        currentRequest = request
+        do {
             chapter = try await service.fetchChapter(
                 baseURL: baseURL,
                 churchID: churchID,
@@ -790,5 +934,14 @@ private struct ChapterReaderSheet: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func scrollToHighlight(using proxy: ScrollViewProxy) {
+        guard let highlightVerse = currentRequest.highlightVerse else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            withAnimation(.easeOut(duration: 0.25)) {
+                proxy.scrollTo("\(currentRequest.book) \(currentRequest.chapter):\(highlightVerse)", anchor: .center)
+            }
+        }
     }
 }
