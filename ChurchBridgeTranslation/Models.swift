@@ -150,6 +150,7 @@ struct DisplayFeedSnapshot {
     var lastInterimSpanish = ""
     var lastFinalSpanish = ""
     var lastCommittedEnglish = ""
+    var lastVisibleSegmentID: Int?
 }
 
 struct AudioDiagnostics {

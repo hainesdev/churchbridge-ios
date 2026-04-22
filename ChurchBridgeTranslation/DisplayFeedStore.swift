@@ -5,12 +5,15 @@ import Observation
 @Observable
 final class DisplayFeedStore {
     private(set) var snapshot = DisplayFeedSnapshot()
+    private var mergedInto: [Int: Int] = [:]
+    private var flashClearTask: Task<Void, Never>?
 
     func setConnected(_ connected: Bool) {
         snapshot.connected = connected
     }
 
     func resetForNewSession() {
+        flashClearTask?.cancel()
         snapshot.segments.removeAll()
         snapshot.spanishLines.removeAll()
         snapshot.partialSpanish = ""
@@ -22,6 +25,8 @@ final class DisplayFeedStore {
         snapshot.lastInterimAt = nil
         snapshot.lastFinalAt = nil
         snapshot.lastTranslationAt = nil
+        snapshot.lastVisibleSegmentID = nil
+        mergedInto.removeAll()
     }
 
     func handle(messageData: Data) throws {
@@ -65,24 +70,28 @@ final class DisplayFeedStore {
             snapshot.partialEnglish = ""
             snapshot.lastCommittedEnglish = english
             snapshot.lastTranslationAt = now
+            snapshot.lastVisibleSegmentID = ts
 
         case "translation_update", "correction":
             let english = (json["english"] as? String) ?? ""
-            let ts = (json["ts"] as? Int) ?? 0
+            let ts = resolveVisibleSegmentID((json["ts"] as? Int) ?? 0)
             guard let index = snapshot.segments.firstIndex(where: { $0.id == ts }) else { return }
             snapshot.segments[index].english = english
             snapshot.segments[index].pendingCompletion = false
-            snapshot.flashingID = ts
+            flashSegment(ts)
+            snapshot.lastVisibleSegmentID = ts
 
         case "caption_merge":
             guard
                 let keepID = json["ts_keep"] as? Int,
                 let absorbID = json["ts_absorb"] as? Int,
-                let keepIndex = snapshot.segments.firstIndex(where: { $0.id == keepID })
+                let keepIndex = snapshot.segments.firstIndex(where: { $0.id == resolveVisibleSegmentID(keepID) })
             else {
                 return
             }
+            let resolvedKeepID = resolveVisibleSegmentID(keepID)
             let absorbed = snapshot.segments.first(where: { $0.id == absorbID })
+            mergedInto[absorbID] = resolvedKeepID
             snapshot.segments.removeAll(where: { $0.id == absorbID })
             snapshot.segments[keepIndex].spanish = (json["spanish"] as? String) ?? snapshot.segments[keepIndex].spanish
             snapshot.segments[keepIndex].english = (json["english"] as? String) ?? snapshot.segments[keepIndex].english
@@ -93,9 +102,15 @@ final class DisplayFeedStore {
             if snapshot.segments[keepIndex].verseSuggestions.isEmpty {
                 snapshot.segments[keepIndex].verseSuggestions = absorbed?.verseSuggestions ?? []
             }
+            snapshot.lastVisibleSegmentID = resolvedKeepID
 
         case "segment_metadata":
-            guard let ts = json["ts"] as? Int, let index = snapshot.segments.firstIndex(where: { $0.id == ts }) else { return }
+            guard
+                let ts = json["ts"] as? Int,
+                let index = snapshot.segments.firstIndex(where: { $0.id == resolveVisibleSegmentID(ts) })
+            else {
+                return
+            }
             snapshot.segments[index].pendingCompletion = (json["pending_completion"] as? Bool) ?? snapshot.segments[index].pendingCompletion
             snapshot.segments[index].terminalIncomplete = (json["terminal_incomplete"] as? Bool) ?? snapshot.segments[index].terminalIncomplete
 
@@ -105,7 +120,7 @@ final class DisplayFeedStore {
         case "verse_detected":
             guard
                 let ts = json["ts"] as? Int,
-                let index = snapshot.segments.firstIndex(where: { $0.id == ts }),
+                let index = snapshot.segments.firstIndex(where: { $0.id == resolveVisibleSegmentID(ts) }),
                 let verseData = try? JSONSerialization.data(withJSONObject: json["verse"] as Any),
                 let verse = try? JSONDecoder().decode(VerseDetection.self, from: verseData)
             else {
@@ -116,7 +131,7 @@ final class DisplayFeedStore {
         case "verse_range_update":
             guard
                 let ts = json["ts"] as? Int,
-                let index = snapshot.segments.firstIndex(where: { $0.id == ts }),
+                let index = snapshot.segments.firstIndex(where: { $0.id == resolveVisibleSegmentID(ts) }),
                 let verseData = try? JSONSerialization.data(withJSONObject: json["verse"] as Any),
                 let verse = try? JSONDecoder().decode(VerseDetection.self, from: verseData)
             else {
@@ -127,7 +142,7 @@ final class DisplayFeedStore {
         case "verse_suggestion":
             guard
                 let ts = json["ts"] as? Int,
-                let index = snapshot.segments.firstIndex(where: { $0.id == ts }),
+                let index = snapshot.segments.firstIndex(where: { $0.id == resolveVisibleSegmentID(ts) }),
                 let suggestionsObject = json["suggestions"],
                 let suggestionsData = try? JSONSerialization.data(withJSONObject: suggestionsObject),
                 let suggestions = try? JSONDecoder().decode([VerseSuggestion].self, from: suggestionsData)
@@ -138,6 +153,26 @@ final class DisplayFeedStore {
 
         default:
             return
+        }
+    }
+
+    private func resolveVisibleSegmentID(_ ts: Int) -> Int {
+        var current = ts
+        var visited = Set<Int>()
+        while let next = mergedInto[current], !visited.contains(next) {
+            visited.insert(current)
+            current = next
+        }
+        return current
+    }
+
+    private func flashSegment(_ ts: Int) {
+        flashClearTask?.cancel()
+        snapshot.flashingID = ts
+        flashClearTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled, self?.snapshot.flashingID == ts else { return }
+            self?.snapshot.flashingID = nil
         }
     }
 }

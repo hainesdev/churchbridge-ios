@@ -3,6 +3,8 @@ import SwiftUI
 struct TranslationTestView: View {
     @Bindable var viewModel: TranslationTestViewModel
     @State private var selectedSegment: TranslationSegment?
+    @State private var scrollToLiveRequested = 0
+    @State private var userPinnedToLive = true
 
     var body: some View {
         NavigationStack {
@@ -124,69 +126,118 @@ struct TranslationTestView: View {
     }
 
     private var liveFeed: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                diagnosticsGrid
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    diagnosticsGrid
 
-                if viewModel.displayFeed.snapshot.segments.isEmpty,
-                   activeSpanish.isEmpty,
-                   viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
-                    Text(waitingHint)
-                        .font(.system(.callout, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.68))
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 24)
-                }
+                    if viewModel.displayFeed.snapshot.segments.isEmpty,
+                       activeSpanish.isEmpty,
+                       viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
+                        Text(waitingHint)
+                            .font(.system(.callout, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.68))
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 24)
+                    }
 
-                ForEach(viewModel.displayFeed.snapshot.segments) { segment in
-                    Button {
-                        if segment.verseDetected != nil || !segment.verseSuggestions.isEmpty {
-                            selectedSegment = segment
-                        }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .top) {
-                                Text(segment.english)
-                                    .font(.system(.title3, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(segment.id == viewModel.displayFeed.snapshot.flashingID ? Color(red: 0.78, green: 0.9, blue: 1.0) : .white)
+                    ForEach(viewModel.displayFeed.snapshot.segments) { segment in
+                        Button {
+                            if segment.verseDetected != nil || !segment.verseSuggestions.isEmpty {
+                                selectedSegment = segment
+                            }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .top) {
+                                    Text(segment.english)
+                                        .font(.system(.title3, design: .rounded, weight: .semibold))
+                                        .foregroundStyle(segment.id == viewModel.displayFeed.snapshot.flashingID ? Color(red: 0.78, green: 0.9, blue: 1.0) : .white)
+                                        .multilineTextAlignment(.leading)
+                                    Spacer()
+                                }
+
+                                if let verse = segment.verseDetected {
+                                    verseTag(title: verse.reference, tint: Color.orange)
+                                }
+
+                                if !segment.verseSuggestions.isEmpty {
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 8) {
+                                            ForEach(segment.verseSuggestions, id: \.reference) { suggestion in
+                                                verseTag(title: suggestion.reference, tint: Color.blue)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Text(segment.spanish)
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.55))
                                     .multilineTextAlignment(.leading)
-                                Spacer()
                             }
-
-                            if let verse = segment.verseDetected {
-                                verseTag(title: verse.reference, tint: Color.orange)
-                            } else if let first = segment.verseSuggestions.first {
-                                verseTag(title: first.reference, tint: Color.blue)
-                            }
-
-                            Text(segment.spanish)
-                                .font(.system(.subheadline, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.55))
-                                .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(18)
+                            .background(Color.white.opacity(segment.pendingCompletion ? 0.05 : 0.09), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(18)
-                        .background(Color.white.opacity(segment.pendingCompletion ? 0.05 : 0.09), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .buttonStyle(.plain)
+                        .id(segment.id)
                     }
-                    .buttonStyle(.plain)
-                }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
-                        Text("\(viewModel.displayFeed.snapshot.partialEnglish)▌")
-                            .font(.system(.title3, design: .rounded, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.74))
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
+                            Text("\(viewModel.displayFeed.snapshot.partialEnglish)\u{258C}")
+                                .font(.system(.title3, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.74))
+                        }
+                        if !activeSpanish.isEmpty {
+                            Text(activeSpanish)
+                                .font(.system(.subheadline, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.45))
+                        }
                     }
-                    if !activeSpanish.isEmpty {
-                        Text(activeSpanish)
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.45))
-                    }
+                    .padding(.bottom, 18)
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id("live-bottom")
                 }
-                .padding(.bottom, 18)
             }
+            .scrollIndicators(.hidden)
+            .overlay(alignment: .bottomTrailing) {
+                if !userPinnedToLive {
+                    Button {
+                        userPinnedToLive = true
+                        scrollToLiveRequested += 1
+                    } label: {
+                        Text("Live")
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(Color.white.opacity(0.12), in: Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.trailing, 8)
+                    .padding(.bottom, 8)
+                }
+            }
+            .onChange(of: viewModel.displayFeed.snapshot.lastVisibleSegmentID) { _, _ in
+                guard userPinnedToLive else { return }
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo("live-bottom", anchor: .bottom)
+                }
+            }
+            .onChange(of: scrollToLiveRequested) { _, _ in
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo("live-bottom", anchor: .bottom)
+                }
+            }
+            .simultaneousGesture(
+                DragGesture().onChanged { _ in
+                    userPinnedToLive = false
+                }
+            )
         }
-        .scrollIndicators(.hidden)
     }
 
     private var diagnosticsGrid: some View {
@@ -283,8 +334,19 @@ struct TranslationTestView: View {
         if viewModel.diagnostics.rmsLevel < 0.015 {
             return "Input is low. Move the phone closer to the preacher or PA."
         }
+        if let lastInterimAt = viewModel.displayFeed.snapshot.lastInterimAt,
+           viewModel.displayFeed.snapshot.lastFinalAt == nil,
+           Date().timeIntervalSince(lastInterimAt) > 6 {
+            return "Interim speech is arriving, but STT is not settling on a final phrase yet."
+        }
         if viewModel.displayFeed.snapshot.lastFinalAt != nil && viewModel.displayFeed.snapshot.lastTranslationAt == nil {
             return "Spanish finals are arriving. Waiting for committed English."
+        }
+        if let lastFinalAt = viewModel.displayFeed.snapshot.lastFinalAt,
+           let lastTranslationAt = viewModel.displayFeed.snapshot.lastTranslationAt,
+           lastTranslationAt < lastFinalAt,
+           Date().timeIntervalSince(lastFinalAt) > 6 {
+            return "Spanish finals are arriving, but the translation stage is lagging behind."
         }
         return "Listening for speech..."
     }
@@ -315,7 +377,7 @@ struct TranslationTestView: View {
 
     private var voiceProcessingDetail: String {
         let agc = viewModel.diagnostics.voiceProcessingAGCEnabled ? "AGC on" : "AGC off"
-        return "\(viewModel.settings.captureMode.rawValue) · \(agc)"
+        return "\(viewModel.settings.captureMode.rawValue) | \(agc)"
     }
 
     private func percent(_ value: Float) -> String {
