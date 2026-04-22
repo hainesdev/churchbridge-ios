@@ -1347,29 +1347,35 @@ private struct BibleBookPickerSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    private var bookItems: [BibleBook] { books }
-    private var bookIndices: [Int] { Array(bookItems.indices) }
-
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(bookIndices, id: \.self) { index in
-                    let book = bookItems[index]
-                    Button {
-                        onSelect(book)
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Text(book.bookName)
-                                .foregroundColor(.primary)
-                            Spacer()
-                            if book.bookName == currentRequest.book {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.accentColor)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(books, id: \.bookID) { book in
+                        Button {
+                            onSelect(book)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Text(book.bookName)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                if book.bookName == currentRequest.book {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(.accentColor)
+                                }
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+
+                        if book.bookID != books.last?.bookID {
+                            Divider()
+                                .padding(.leading, 16)
                         }
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .navigationTitle("Books")
