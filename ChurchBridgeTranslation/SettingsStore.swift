@@ -10,6 +10,7 @@ final class SettingsStore {
         static let sourceVersion = "churchbridge.sourceVersion"
         static let displayVersion = "churchbridge.displayVersion"
         static let captureMode = "churchbridge.captureMode"
+        static let captureStrategy = "churchbridge.captureStrategy"
     }
 
     private let defaults: UserDefaults
@@ -34,6 +35,10 @@ final class SettingsStore {
         didSet { defaults.set(captureMode.rawValue, forKey: Keys.captureMode) }
     }
 
+    var captureStrategy: AudioCaptureStrategy {
+        didSet { defaults.set(captureStrategy.rawValue, forKey: Keys.captureStrategy) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.baseURLString = defaults.string(forKey: Keys.baseURL) ?? "https://churchbridge.dhaines.dev/"
@@ -41,6 +46,7 @@ final class SettingsStore {
         self.sourceScriptureVersion = defaults.string(forKey: Keys.sourceVersion) ?? "rvr1960"
         self.displayScriptureVersion = defaults.string(forKey: Keys.displayVersion) ?? "kjv"
         self.captureMode = CaptureMode(rawValue: defaults.string(forKey: Keys.captureMode) ?? "") ?? .voiceProcessing
+        self.captureStrategy = AudioCaptureStrategy(rawValue: defaults.string(forKey: Keys.captureStrategy) ?? "") ?? .appleVoicePassthrough
     }
 
     var apiBaseURL: URL? {

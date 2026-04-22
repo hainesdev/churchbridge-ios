@@ -114,6 +114,9 @@ struct TranslationTestView: View {
             Text("Use Voice Processing first, then compare against Echo-Cancelled Input or Raw Debug in the same room.")
                 .font(.system(.body, design: .rounded))
                 .foregroundStyle(.white.opacity(0.76))
+            Text("Capture strategy: \(viewModel.settings.captureStrategy.rawValue)")
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.72))
             diagnosticsGrid
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -374,9 +377,9 @@ struct TranslationTestView: View {
     private var sampleRateDetail: String {
         let format = viewModel.diagnostics.inputFormatDescription
         if format.isEmpty {
-            return "Target \(Int(viewModel.diagnostics.targetSampleRate)) Hz mono"
+            return "Emit \(Int(viewModel.diagnostics.emittedSampleRate)) Hz | chunk \(viewModel.diagnostics.chunkSampleCount)"
         }
-        return "\(format) to \(Int(viewModel.diagnostics.targetSampleRate)) Hz mono"
+        return "\(format) to \(Int(viewModel.diagnostics.emittedSampleRate)) Hz | chunk \(viewModel.diagnostics.chunkSampleCount)"
     }
 
     private var voiceProcessingDetail: String {
@@ -458,6 +461,17 @@ private struct SettingsSheet: View {
                         }
                     }
                     Text(viewModel.settings.captureMode.sessionModeDescription)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Capture Strategy") {
+                    Picker("Strategy", selection: $viewModel.settings.captureStrategy) {
+                        ForEach(AudioCaptureStrategy.allCases) { strategy in
+                            Text(strategy.rawValue).tag(strategy)
+                        }
+                    }
+                    Text(viewModel.settings.captureStrategy.summary)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

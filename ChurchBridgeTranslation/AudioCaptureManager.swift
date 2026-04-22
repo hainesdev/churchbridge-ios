@@ -4,26 +4,23 @@ import Foundation
 final class AudioCaptureManager: NSObject {
     var diagnosticsDidChange: ((AudioDiagnostics) -> Void)?
     var errorHandler: ((String) -> Void)?
-    var audioChunkHandler: ((String) -> Void)?
+    var audioChunkHandler: ((AudioChunkEnvelope) -> Void)?
 
     private let session = AVAudioSession.sharedInstance()
     private let engine = AVAudioEngine()
     private let processingQueue = DispatchQueue(label: "ChurchBridgeTranslation.audio-processing", qos: .userInitiated)
     private let processingQueueKey = DispatchSpecificKey<UInt8>()
-    private let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)
     private var hardwareInputFormat: AVAudioFormat?
+    private var targetFormat: AVAudioFormat?
     private var converter: AVAudioConverter?
     private var diagnostics = AudioDiagnostics()
     private var pendingSamples: [Float] = []
-    // Match the browser client by sending ~100 ms of 16 kHz mono audio per websocket
-    // message instead of 20 ms frames. Deepgram handles short frames, but the browser
-    // path that is known-good batches before sending, so we keep the iOS transport cadence
-    // aligned with that production path.
-    private let chunkSamples = 1_600
     private var isRunning = false
     private var currentMode: CaptureMode?
     private var currentRequestedMode: CaptureMode?
+    private var currentStrategy: AudioCaptureStrategy = .appleVoicePassthrough
     private var isReconfiguring = false
+    private var lastReconfigureAt: Date?
 
     override init() {
         super.init()
@@ -37,7 +34,7 @@ final class AudioCaptureManager: NSObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    func start(mode: CaptureMode) async throws {
+    func start(mode: CaptureMode, strategy: AudioCaptureStrategy) async throws {
         guard !isRunning else { return }
 
         let granted = await AVAudioApplication.requestRecordPermission()
@@ -48,9 +45,11 @@ final class AudioCaptureManager: NSObject {
         }
 
         let effectiveMode = resolveEffectiveMode(requestedMode: mode)
-        resetStageDiagnostics()
         currentMode = effectiveMode
         currentRequestedMode = mode
+        currentStrategy = strategy
+        resetStageDiagnostics()
+        diagnostics.captureStrategy = strategy.rawValue
         try configureSession(for: effectiveMode)
         try configureEngine(for: effectiveMode, requestedMode: mode)
         engine.prepare()
@@ -73,6 +72,8 @@ final class AudioCaptureManager: NSObject {
         isRunning = false
         currentMode = nil
         currentRequestedMode = nil
+        currentStrategy = .appleVoicePassthrough
+        lastReconfigureAt = nil
         diagnostics.engineRunning = false
         diagnostics.speechDetected = false
         diagnostics.rmsLevel = 0
@@ -170,21 +171,25 @@ final class AudioCaptureManager: NSObject {
         }
 
         let hardwareFormat = inputNode.outputFormat(forBus: 0)
-        guard let targetFormat else {
-            throw NSError(domain: "ChurchBridgeAudio", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unable to create 16 kHz target format."])
+        let outputSampleRate = currentStrategy == .appleVoicePassthrough ? hardwareFormat.sampleRate : 16_000
+        guard let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: outputSampleRate, channels: 1, interleaved: false) else {
+            throw NSError(domain: "ChurchBridgeAudio", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unable to create output processing format."])
         }
         guard let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: hardwareFormat.sampleRate, channels: 1, interleaved: false) else {
             throw NSError(domain: "ChurchBridgeAudio", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unable to create mono processing format."])
         }
 
         hardwareInputFormat = hardwareFormat
-        converter = AVAudioConverter(from: monoFormat, to: targetFormat)
+        self.targetFormat = targetFormat
+        converter = currentStrategy == .persistentConverter ? makeConverter(from: monoFormat, to: targetFormat) : nil
         resetPendingSamples()
 
         diagnostics.inputSampleRate = hardwareFormat.sampleRate
         diagnostics.inputChannels = Int(hardwareFormat.channelCount)
         diagnostics.inputFormatDescription = describe(format: hardwareFormat)
         diagnostics.targetSampleRate = targetFormat.sampleRate
+        diagnostics.emittedSampleRate = outputSampleRate
+        diagnostics.chunkSampleCount = chunkSampleCount(for: outputSampleRate)
         diagnostics.voiceProcessingAGCEnabled = inputNode.isVoiceProcessingAGCEnabled
         diagnostics.batchesSent = 0
         diagnostics.lastBatchAt = nil
@@ -218,58 +223,34 @@ final class AudioCaptureManager: NSObject {
 
     private func process(samples: [Float]) {
         diagnostics.processingInvocationCount += 1
-        guard
-            let hardwareInputFormat,
-            let converter,
-            let sourceFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: hardwareInputFormat.sampleRate, channels: 1, interleaved: false),
-            let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(samples.count))
-        else {
-            return
-        }
 
-        sourceBuffer.frameLength = AVAudioFrameCount(samples.count)
-        guard let destination = sourceBuffer.floatChannelData?[0] else { return }
-        destination.update(from: samples, count: samples.count)
-
-        guard let targetFormat else { return }
-        let outputCapacity = AVAudioFrameCount((Double(sourceBuffer.frameLength) * targetFormat.sampleRate / sourceFormat.sampleRate).rounded(.up)) + 32
-        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else { return }
-
-        var conversionError: NSError?
-        var usedInput = false
-        let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
-            if usedInput {
-                outStatus.pointee = .endOfStream
-                return nil
+        let outputSamples: [Float]
+        if currentStrategy == .appleVoicePassthrough {
+            outputSamples = samples
+        } else {
+            guard
+                let hardwareInputFormat,
+                let sourceFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: hardwareInputFormat.sampleRate, channels: 1, interleaved: false),
+                let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(samples.count))
+            else {
+                return
             }
-            usedInput = true
-            outStatus.pointee = .haveData
-            return sourceBuffer
+
+            sourceBuffer.frameLength = AVAudioFrameCount(samples.count)
+            guard let destination = sourceBuffer.floatChannelData?[0] else { return }
+            destination.update(from: samples, count: samples.count)
+
+            guard let converted = convertBuffer(sourceBuffer, sourceFormat: sourceFormat) else { return }
+            outputSamples = converted
         }
 
-        if let conversionError {
-            diagnostics.conversionFailureCount += 1
-            emitError("Audio convert failed: \(conversionError.localizedDescription)")
-            return
-        }
-
-        guard status != .error, let channelData = outputBuffer.floatChannelData?[0] else { return }
-        let frameCount = Int(outputBuffer.frameLength)
-        guard frameCount > 0 else {
-            diagnostics.zeroFrameConversionCount += 1
-            publishDiagnostics()
-            return
-        }
-
-        diagnostics.conversionSuccessCount += 1
-        diagnostics.convertedFrameCount += frameCount
-        diagnostics.lastConvertedAt = Date()
-        let convertedSamples = Array(UnsafeBufferPointer(start: channelData, count: frameCount))
-        updateLevels(from: convertedSamples)
-        pendingSamples.append(contentsOf: convertedSamples)
+        guard !outputSamples.isEmpty else { return }
+        updateLevels(from: outputSamples)
+        pendingSamples.append(contentsOf: outputSamples)
         diagnostics.pendingSampleCount = pendingSamples.count
         diagnostics.pendingSampleHighWaterMark = max(diagnostics.pendingSampleHighWaterMark, pendingSamples.count)
 
+        let chunkSamples = chunkSampleCount(for: diagnostics.emittedSampleRate)
         while pendingSamples.count >= chunkSamples {
             let chunk = Array(pendingSamples.prefix(chunkSamples))
             pendingSamples.removeFirst(chunkSamples)
@@ -280,7 +261,7 @@ final class AudioCaptureManager: NSObject {
             diagnostics.batchesSent += 1
             diagnostics.lastBatchAt = Date()
             publishDiagnostics()
-            emitChunk(base64)
+            emitChunk(base64, sampleRate: Int(diagnostics.emittedSampleRate.rounded()))
         }
     }
 
@@ -335,11 +316,94 @@ final class AudioCaptureManager: NSObject {
         return monoSamples
     }
 
+    private func convertBuffer(_ sourceBuffer: AVAudioPCMBuffer, sourceFormat: AVAudioFormat) -> [Float]? {
+        guard let targetFormat else { return nil }
+        let outputCapacity = AVAudioFrameCount((Double(sourceBuffer.frameLength) * targetFormat.sampleRate / sourceFormat.sampleRate).rounded(.up)) + 64
+        guard outputCapacity > 0 else { return nil }
+
+        let activeConverter: AVAudioConverter?
+        switch currentStrategy {
+        case .persistentConverter:
+            activeConverter = converter
+        case .ephemeralConverter:
+            activeConverter = makeConverter(from: sourceFormat, to: targetFormat)
+        case .appleVoicePassthrough:
+            activeConverter = nil
+        }
+
+        guard let activeConverter else { return nil }
+        var outputSamples: [Float] = []
+        var conversionError: NSError?
+        var inputProvided = false
+
+        while true {
+            guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else { return nil }
+            let status = activeConverter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+                if inputProvided {
+                    outStatus.pointee = self.currentStrategy == .persistentConverter ? .noDataNow : .endOfStream
+                    return nil
+                }
+                inputProvided = true
+                outStatus.pointee = .haveData
+                return sourceBuffer
+            }
+
+            if let conversionError {
+                diagnostics.conversionFailureCount += 1
+                emitError("Audio convert failed: \(conversionError.localizedDescription)")
+                publishDiagnostics()
+                return nil
+            }
+
+            let frameCount = Int(outputBuffer.frameLength)
+            if frameCount > 0, let channelData = outputBuffer.floatChannelData?[0] {
+                diagnostics.conversionSuccessCount += 1
+                diagnostics.convertedFrameCount += frameCount
+                diagnostics.lastConvertedAt = Date()
+                outputSamples.append(contentsOf: UnsafeBufferPointer(start: channelData, count: frameCount))
+            }
+
+            switch status {
+            case .haveData:
+                if frameCount == 0 {
+                    diagnostics.zeroFrameConversionCount += 1
+                    publishDiagnostics()
+                    return outputSamples.isEmpty ? nil : outputSamples
+                }
+                continue
+            case .inputRanDry, .endOfStream:
+                if frameCount == 0 {
+                    diagnostics.zeroFrameConversionCount += 1
+                }
+                publishDiagnostics()
+                return outputSamples.isEmpty ? nil : outputSamples
+            case .error:
+                diagnostics.conversionFailureCount += 1
+                publishDiagnostics()
+                return nil
+            @unknown default:
+                publishDiagnostics()
+                return outputSamples.isEmpty ? nil : outputSamples
+            }
+        }
+    }
+
+    private func makeConverter(from sourceFormat: AVAudioFormat, to targetFormat: AVAudioFormat) -> AVAudioConverter? {
+        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+            return nil
+        }
+        converter.primeMethod = .none
+        converter.downmix = false
+        converter.sampleRateConverterQuality = AVAudioQuality.high.rawValue
+        return converter
+    }
+
     private func teardownCaptureGraph() {
         let inputNode = engine.inputNode
         inputNode.removeTap(onBus: 0)
         converter = nil
         hardwareInputFormat = nil
+        targetFormat = nil
     }
 
     private func updateLevels(from samples: [Float]) {
@@ -412,9 +476,9 @@ final class AudioCaptureManager: NSObject {
         }
     }
 
-    private func emitChunk(_ base64: String) {
+    private func emitChunk(_ base64: String, sampleRate: Int) {
         DispatchQueue.main.async { [weak self] in
-            self?.audioChunkHandler?(base64)
+            self?.audioChunkHandler?(AudioChunkEnvelope(base64: base64, sampleRate: sampleRate))
         }
     }
 
@@ -454,10 +518,15 @@ final class AudioCaptureManager: NSObject {
     private func reconfigureCaptureGraph(reason: String, completion: ((Bool) -> Void)? = nil) {
         guard isRunning, !isReconfiguring else { return }
         guard let mode = currentMode, let requestedMode = currentRequestedMode else { return }
+        if let lastReconfigureAt, Date().timeIntervalSince(lastReconfigureAt) < 0.75 {
+            completion?(false)
+            return
+        }
 
         diagnostics.captureRestartCount += 1
         diagnostics.lastRestartAt = Date()
         diagnostics.lastRestartReason = reason
+        lastReconfigureAt = diagnostics.lastRestartAt
         isReconfiguring = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -515,5 +584,12 @@ final class AudioCaptureManager: NSObject {
         diagnostics.captureRestartCount = 0
         diagnostics.lastRestartAt = nil
         diagnostics.lastRestartReason = ""
+        diagnostics.captureStrategy = currentStrategy.rawValue
+        diagnostics.emittedSampleRate = Double(currentStrategy.targetSampleRate)
+        diagnostics.chunkSampleCount = chunkSampleCount(for: diagnostics.emittedSampleRate)
+    }
+
+    private func chunkSampleCount(for sampleRate: Double) -> Int {
+        max(Int((sampleRate * 0.1).rounded()), 256)
     }
 }

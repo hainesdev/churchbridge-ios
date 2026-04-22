@@ -87,9 +87,9 @@ final class TranslationTestViewModel {
         audioCapture.errorHandler = { [weak self] message in
             Task { @MainActor in self?.latestError = message }
         }
-        audioCapture.audioChunkHandler = { [weak self] base64 in
+        audioCapture.audioChunkHandler = { [weak self] chunk in
             Task {
-                await self?.handleOutgoingAudioChunk(base64)
+                await self?.handleOutgoingAudioChunk(chunk)
             }
         }
 
@@ -135,14 +135,14 @@ final class TranslationTestViewModel {
         let configuration = StreamSocketClient.StreamConfiguration(
             url: wsBaseURL,
             churchID: settings.churchID,
-            sampleRate: 16_000,
+            sampleRate: settings.captureStrategy.targetSampleRate,
             sourceScriptureVersion: settings.sourceScriptureVersion,
             displayScriptureVersion: settings.displayScriptureVersion
         )
 
         await streamClient.connect(configuration: configuration)
         do {
-            try await audioCapture.start(mode: settings.captureMode)
+            try await audioCapture.start(mode: settings.captureMode, strategy: settings.captureStrategy)
             isRunning = true
         } catch {
             latestError = error.localizedDescription
@@ -299,9 +299,11 @@ final class TranslationTestViewModel {
                 let durationMs = intValue(payload["duration_ms"], default: 6_000)
                 let includeStream = boolValue(payload["include_stream"], default: false)
                 let requestedMode = captureModeValue(payload["capture_mode"])
+                let requestedStrategy = captureStrategyValue(payload["capture_strategy"])
                 let result = await self.runCapturePipelineProbe(
                     durationMs: durationMs,
                     captureMode: requestedMode,
+                    captureStrategy: requestedStrategy,
                     includeStream: includeStream
                 )
                 await self.postDiagnosticsReport(
@@ -315,10 +317,12 @@ final class TranslationTestViewModel {
                 let rebuildDelayMs = intValue(payload["rebuild_delay_ms"], default: 1_500)
                 let includeStream = boolValue(payload["include_stream"], default: true)
                 let requestedMode = captureModeValue(payload["capture_mode"])
+                let requestedStrategy = captureStrategyValue(payload["capture_strategy"])
                 let result = await self.runCaptureRebuildProbe(
                     durationMs: durationMs,
                     rebuildDelayMs: rebuildDelayMs,
                     captureMode: requestedMode,
+                    captureStrategy: requestedStrategy,
                     includeStream: includeStream
                 )
                 await self.postDiagnosticsReport(
@@ -330,8 +334,25 @@ final class TranslationTestViewModel {
             case "capture_mode_matrix_probe":
                 let perModeDurationMs = intValue(payload["per_mode_duration_ms"], default: 4_000)
                 let includeStream = boolValue(payload["include_stream"], default: false)
+                let requestedStrategy = captureStrategyValue(payload["capture_strategy"])
                 let result = await self.runCaptureModeMatrixProbe(
                     perModeDurationMs: perModeDurationMs,
+                    captureStrategy: requestedStrategy,
+                    includeStream: includeStream
+                )
+                await self.postDiagnosticsReport(
+                    commandID: commandID,
+                    reportType: commandName,
+                    status: result.success ? "completed" : "failed",
+                    payload: result.payload
+                )
+            case "capture_strategy_matrix_probe":
+                let perStrategyDurationMs = intValue(payload["per_strategy_duration_ms"], default: 4_000)
+                let includeStream = boolValue(payload["include_stream"], default: false)
+                let requestedMode = captureModeValue(payload["capture_mode"])
+                let result = await self.runCaptureStrategyMatrixProbe(
+                    perStrategyDurationMs: perStrategyDurationMs,
+                    captureMode: requestedMode,
                     includeStream: includeStream
                 )
                 await self.postDiagnosticsReport(
@@ -356,7 +377,7 @@ final class TranslationTestViewModel {
         remoteDiagnosticsTask = nil
     }
 
-    private func handleOutgoingAudioChunk(_ base64: String) async {
+    private func handleOutgoingAudioChunk(_ chunk: AudioChunkEnvelope) async {
         let now = Date()
         audioChunksObserved += 1
         if firstAudioChunkObservedAt == nil {
@@ -364,18 +385,18 @@ final class TranslationTestViewModel {
         }
         lastAudioChunkObservedAt = now
 
-        let localAnalysis = analyzeOutgoingChunk(base64: base64)
+        let localAnalysis = analyzeOutgoingChunk(base64: chunk.base64, sampleRate: chunk.sampleRate)
 
-        let result = await streamClient.sendAudio(base64Float32: base64)
+        let result = await streamClient.sendAudio(base64Float32: chunk.base64)
         let sequence = nextOutgoingChunkSequence()
         rememberOutgoingChunk(
             OutgoingAudioChunkRecord(
                 sequence: sequence,
                 createdAt: now,
-                sampleRate: 16_000,
+                sampleRate: chunk.sampleRate,
                 encodedBytes: result.encodedBytes,
                 decodedBytes: result.decodedBytes,
-                base64: base64,
+                base64: chunk.base64,
                 analysis: localAnalysis
             )
         )
@@ -400,7 +421,7 @@ final class TranslationTestViewModel {
 
         if !usedExistingCapture {
             do {
-                try await audioCapture.start(mode: settings.captureMode)
+                try await audioCapture.start(mode: settings.captureMode, strategy: settings.captureStrategy)
                 startedLocalCapture = true
             } catch {
                 return (
@@ -453,7 +474,7 @@ final class TranslationTestViewModel {
             let configuration = StreamSocketClient.StreamConfiguration(
                 url: wsBaseURL,
                 churchID: settings.churchID,
-                sampleRate: 16_000,
+                sampleRate: settings.captureStrategy.targetSampleRate,
                 sourceScriptureVersion: settings.sourceScriptureVersion,
                 displayScriptureVersion: settings.displayScriptureVersion
             )
@@ -464,7 +485,7 @@ final class TranslationTestViewModel {
 
         if !usedExistingCapture {
             do {
-                try await audioCapture.start(mode: settings.captureMode)
+                try await audioCapture.start(mode: settings.captureMode, strategy: settings.captureStrategy)
                 startedLocalCapture = true
             } catch {
                 if startedLocalStream {
@@ -532,7 +553,7 @@ final class TranslationTestViewModel {
             let configuration = StreamSocketClient.StreamConfiguration(
                 url: wsBaseURL,
                 churchID: settings.churchID,
-                sampleRate: 16_000,
+                sampleRate: settings.captureStrategy.targetSampleRate,
                 sourceScriptureVersion: settings.sourceScriptureVersion,
                 displayScriptureVersion: settings.displayScriptureVersion
             )
@@ -543,7 +564,7 @@ final class TranslationTestViewModel {
 
         if !usedExistingCapture {
             do {
-                try await audioCapture.start(mode: settings.captureMode)
+                try await audioCapture.start(mode: settings.captureMode, strategy: settings.captureStrategy)
                 startedLocalCapture = true
             } catch {
                 if startedLocalStream {
@@ -622,7 +643,7 @@ final class TranslationTestViewModel {
             let configuration = StreamSocketClient.StreamConfiguration(
                 url: wsBaseURL,
                 churchID: settings.churchID,
-                sampleRate: 16_000,
+                sampleRate: settings.captureStrategy.targetSampleRate,
                 sourceScriptureVersion: settings.sourceScriptureVersion,
                 displayScriptureVersion: settings.displayScriptureVersion
             )
@@ -633,7 +654,7 @@ final class TranslationTestViewModel {
 
         if !usedExistingCapture {
             do {
-                try await audioCapture.start(mode: settings.captureMode)
+                try await audioCapture.start(mode: settings.captureMode, strategy: settings.captureStrategy)
                 startedLocalCapture = true
             } catch {
                 if startedLocalStream {
@@ -692,16 +713,20 @@ final class TranslationTestViewModel {
     private func runCapturePipelineProbe(
         durationMs: Int,
         captureMode: CaptureMode?,
+        captureStrategy: AudioCaptureStrategy?,
         includeStream: Bool
     ) async -> (success: Bool, payload: [String: Any]) {
         let requestedMode = captureMode ?? settings.captureMode
-        if isRunning && requestedMode != settings.captureMode {
+        let requestedStrategy = captureStrategy ?? settings.captureStrategy
+        if isRunning && (requestedMode != settings.captureMode || requestedStrategy != settings.captureStrategy) {
             return (
                 false,
                 [
-                    "error": "Stop the current test before probing a different capture mode.",
+                    "error": "Stop the current test before probing a different capture configuration.",
                     "requested_mode": requestedMode.rawValue,
+                    "requested_strategy": requestedStrategy.rawValue,
                     "current_mode": settings.captureMode.rawValue,
+                    "current_strategy": settings.captureStrategy.rawValue,
                     "initial_snapshot": diagnosticsSnapshotPayload(),
                 ]
             )
@@ -714,12 +739,13 @@ final class TranslationTestViewModel {
         var startedLocalCapture = false
 
         if includeStream, !usedExistingStream {
-            guard await connectStreamForDiagnostics() else {
+            guard await connectStreamForDiagnostics(sampleRate: requestedStrategy.targetSampleRate) else {
                 return (
                     false,
                     [
                         "error": NetworkError.invalidBaseURL.localizedDescription ?? "Invalid base URL.",
                         "requested_mode": requestedMode.rawValue,
+                        "requested_strategy": requestedStrategy.rawValue,
                         "initial_snapshot": initialSnapshot,
                     ]
                 )
@@ -729,7 +755,7 @@ final class TranslationTestViewModel {
 
         if !usedExistingCapture {
             do {
-                try await audioCapture.start(mode: requestedMode)
+                try await audioCapture.start(mode: requestedMode, strategy: requestedStrategy)
                 startedLocalCapture = true
             } catch {
                 if startedLocalStream {
@@ -740,6 +766,7 @@ final class TranslationTestViewModel {
                     [
                         "error": error.localizedDescription,
                         "requested_mode": requestedMode.rawValue,
+                        "requested_strategy": requestedStrategy.rawValue,
                         "initial_snapshot": initialSnapshot,
                         "final_snapshot": diagnosticsSnapshotPayload(),
                     ]
@@ -770,6 +797,7 @@ final class TranslationTestViewModel {
             [
                 "duration_ms": durationMs,
                 "requested_mode": requestedMode.rawValue,
+                "requested_strategy": requestedStrategy.rawValue,
                 "include_stream": includeStream,
                 "used_existing_capture": usedExistingCapture,
                 "used_existing_stream": usedExistingStream,
@@ -787,16 +815,20 @@ final class TranslationTestViewModel {
         durationMs: Int,
         rebuildDelayMs: Int,
         captureMode: CaptureMode?,
+        captureStrategy: AudioCaptureStrategy?,
         includeStream: Bool
     ) async -> (success: Bool, payload: [String: Any]) {
         let requestedMode = captureMode ?? settings.captureMode
-        if isRunning && requestedMode != settings.captureMode {
+        let requestedStrategy = captureStrategy ?? settings.captureStrategy
+        if isRunning && (requestedMode != settings.captureMode || requestedStrategy != settings.captureStrategy) {
             return (
                 false,
                 [
-                    "error": "Stop the current test before probing a different capture mode.",
+                    "error": "Stop the current test before probing a different capture configuration.",
                     "requested_mode": requestedMode.rawValue,
+                    "requested_strategy": requestedStrategy.rawValue,
                     "current_mode": settings.captureMode.rawValue,
+                    "current_strategy": settings.captureStrategy.rawValue,
                     "initial_snapshot": diagnosticsSnapshotPayload(),
                 ]
             )
@@ -809,12 +841,13 @@ final class TranslationTestViewModel {
         var startedLocalCapture = false
 
         if includeStream, !usedExistingStream {
-            guard await connectStreamForDiagnostics() else {
+            guard await connectStreamForDiagnostics(sampleRate: requestedStrategy.targetSampleRate) else {
                 return (
                     false,
                     [
                         "error": NetworkError.invalidBaseURL.localizedDescription ?? "Invalid base URL.",
                         "requested_mode": requestedMode.rawValue,
+                        "requested_strategy": requestedStrategy.rawValue,
                         "initial_snapshot": initialSnapshot,
                     ]
                 )
@@ -824,7 +857,7 @@ final class TranslationTestViewModel {
 
         if !usedExistingCapture {
             do {
-                try await audioCapture.start(mode: requestedMode)
+                try await audioCapture.start(mode: requestedMode, strategy: requestedStrategy)
                 startedLocalCapture = true
             } catch {
                 if startedLocalStream {
@@ -835,6 +868,7 @@ final class TranslationTestViewModel {
                     [
                         "error": error.localizedDescription,
                         "requested_mode": requestedMode.rawValue,
+                        "requested_strategy": requestedStrategy.rawValue,
                         "initial_snapshot": initialSnapshot,
                         "final_snapshot": diagnosticsSnapshotPayload(),
                     ]
@@ -867,6 +901,7 @@ final class TranslationTestViewModel {
                 "duration_ms": durationMs,
                 "rebuild_delay_ms": rebuildDelayMs,
                 "requested_mode": requestedMode.rawValue,
+                "requested_strategy": requestedStrategy.rawValue,
                 "include_stream": includeStream,
                 "used_existing_capture": usedExistingCapture,
                 "used_existing_stream": usedExistingStream,
@@ -885,6 +920,7 @@ final class TranslationTestViewModel {
 
     private func runCaptureModeMatrixProbe(
         perModeDurationMs: Int,
+        captureStrategy: AudioCaptureStrategy?,
         includeStream: Bool
     ) async -> (success: Bool, payload: [String: Any]) {
         if isRunning || streamIsActive {
@@ -900,15 +936,18 @@ final class TranslationTestViewModel {
         let initialSnapshot = diagnosticsSnapshotPayload()
         var results: [[String: Any]] = []
         var anyExecuted = false
+        let requestedStrategy = captureStrategy ?? settings.captureStrategy
 
         for mode in CaptureMode.allCases {
             let probe = await runCapturePipelineProbe(
                 durationMs: perModeDurationMs,
                 captureMode: mode,
+                captureStrategy: requestedStrategy,
                 includeStream: includeStream
             )
             results.append([
                 "capture_mode": mode.rawValue,
+                "capture_strategy": requestedStrategy.rawValue,
                 "success": probe.success,
                 "payload": probe.payload,
             ])
@@ -920,8 +959,56 @@ final class TranslationTestViewModel {
             [
                 "per_mode_duration_ms": perModeDurationMs,
                 "include_stream": includeStream,
+                "capture_strategy": requestedStrategy.rawValue,
                 "initial_snapshot": initialSnapshot,
                 "mode_results": results,
+                "final_snapshot": diagnosticsSnapshotPayload(),
+            ]
+        )
+    }
+
+    private func runCaptureStrategyMatrixProbe(
+        perStrategyDurationMs: Int,
+        captureMode: CaptureMode?,
+        includeStream: Bool
+    ) async -> (success: Bool, payload: [String: Any]) {
+        if isRunning || streamIsActive {
+            return (
+                false,
+                [
+                    "error": "Stop the current test before running the capture strategy matrix probe.",
+                    "initial_snapshot": diagnosticsSnapshotPayload(),
+                ]
+            )
+        }
+
+        let requestedMode = captureMode ?? settings.captureMode
+        let initialSnapshot = diagnosticsSnapshotPayload()
+        var results: [[String: Any]] = []
+
+        for strategy in AudioCaptureStrategy.allCases {
+            let probe = await runCapturePipelineProbe(
+                durationMs: perStrategyDurationMs,
+                captureMode: requestedMode,
+                captureStrategy: strategy,
+                includeStream: includeStream
+            )
+            results.append([
+                "capture_mode": requestedMode.rawValue,
+                "capture_strategy": strategy.rawValue,
+                "success": probe.success,
+                "payload": probe.payload,
+            ])
+        }
+
+        return (
+            !results.isEmpty,
+            [
+                "per_strategy_duration_ms": perStrategyDurationMs,
+                "capture_mode": requestedMode.rawValue,
+                "include_stream": includeStream,
+                "initial_snapshot": initialSnapshot,
+                "strategy_results": results,
                 "final_snapshot": diagnosticsSnapshotPayload(),
             ]
         )
@@ -1027,9 +1114,12 @@ final class TranslationTestViewModel {
                 "route_inputs": diagnostics.routeInputs,
                 "route_outputs": diagnostics.routeOutputs,
                 "capture_path": diagnostics.capturePath,
+                "capture_strategy": diagnostics.captureStrategy,
                 "fallback_reason": diagnostics.fallbackReason,
                 "input_sample_rate": diagnostics.inputSampleRate,
                 "target_sample_rate": diagnostics.targetSampleRate,
+                "emitted_sample_rate": diagnostics.emittedSampleRate,
+                "chunk_sample_count": diagnostics.chunkSampleCount,
                 "input_channels": diagnostics.inputChannels,
                 "input_format_description": diagnostics.inputFormatDescription,
                 "clipping": diagnostics.clipping,
@@ -1216,15 +1306,37 @@ final class TranslationTestViewModel {
         }
     }
 
+    private func captureStrategyValue(_ value: Any?) -> AudioCaptureStrategy? {
+        guard let string = value as? String else { return nil }
+        let normalized = string
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .lowercased()
+
+        switch normalized {
+        case "applevoicepassthrough", "apple", "passthrough", "serverresample":
+            return .appleVoicePassthrough
+        case "persistentconverter", "persistent", "streamingconverter":
+            return .persistentConverter
+        case "ephemeralconverter", "ephemeral", "perbufferconverter":
+            return .ephemeralConverter
+        default:
+            return AudioCaptureStrategy(rawValue: string)
+        }
+    }
+
     private func jsonValue(_ value: Any?) -> Any {
         value ?? NSNull()
     }
 
-    private func analyzeOutgoingChunk(base64: String) -> [String: Any] {
+    private func analyzeOutgoingChunk(base64: String, sampleRate: Int) -> [String: Any] {
         guard let data = Data(base64Encoded: base64) else {
             return [
                 "decode_error": true,
                 "sample_count": 0,
+                "sample_rate": sampleRate,
             ]
         }
         let floats: [Float] = data.withUnsafeBytes { rawBuffer in
@@ -1236,6 +1348,7 @@ final class TranslationTestViewModel {
                 "decode_error": false,
                 "sample_count": 0,
                 "looks_silent": true,
+                "sample_rate": sampleRate,
             ]
         }
 
@@ -1267,7 +1380,8 @@ final class TranslationTestViewModel {
         let clippingRatio = Float(clippingCount) / max(count, 1.0)
         return [
             "sample_count": floats.count,
-            "duration_ms": Double(floats.count) / 16.0,
+            "sample_rate": sampleRate,
+            "duration_ms": Double(floats.count) / max(Double(sampleRate) / 1000.0, 1.0),
             "rms": Double(rms),
             "peak": Double(peak),
             "mean_abs": Double(sumAbs / max(count, 1.0)),
@@ -1401,12 +1515,12 @@ final class TranslationTestViewModel {
         isRunning || streamStatus == .connected || streamStatus == .connecting || streamStatus == .reconnecting
     }
 
-    private func connectStreamForDiagnostics() async -> Bool {
+    private func connectStreamForDiagnostics(sampleRate: Int) async -> Bool {
         guard let wsBaseURL = settings.webSocketBaseURL else { return false }
         let configuration = StreamSocketClient.StreamConfiguration(
             url: wsBaseURL,
             churchID: settings.churchID,
-            sampleRate: 16_000,
+            sampleRate: sampleRate,
             sourceScriptureVersion: settings.sourceScriptureVersion,
             displayScriptureVersion: settings.displayScriptureVersion
         )

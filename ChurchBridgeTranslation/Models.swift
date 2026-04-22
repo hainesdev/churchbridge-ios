@@ -19,6 +19,34 @@ enum CaptureMode: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum AudioCaptureStrategy: String, CaseIterable, Identifiable, Codable {
+    case appleVoicePassthrough = "Apple Voice Passthrough"
+    case persistentConverter = "Persistent Converter"
+    case ephemeralConverter = "Ephemeral Converter"
+
+    var id: String { rawValue }
+
+    var summary: String {
+        switch self {
+        case .appleVoicePassthrough:
+            return "Capture the voice-processing input format directly and let the server resample."
+        case .persistentConverter:
+            return "Keep one AVAudioConverter alive across callbacks and drain it like a stream."
+        case .ephemeralConverter:
+            return "Build a fresh AVAudioConverter for each tap buffer to avoid sticky converter state."
+        }
+    }
+
+    var targetSampleRate: Int {
+        switch self {
+        case .appleVoicePassthrough:
+            return 48_000
+        case .persistentConverter, .ephemeralConverter:
+            return 16_000
+        }
+    }
+}
+
 enum StreamStatus: String {
     case idle
     case connecting
@@ -193,6 +221,14 @@ struct AudioDiagnostics {
     var captureRestartCount = 0
     var lastRestartAt: Date?
     var lastRestartReason = ""
+    var captureStrategy = AudioCaptureStrategy.appleVoicePassthrough.rawValue
+    var emittedSampleRate: Double = 16_000
+    var chunkSampleCount = 1_600
+}
+
+struct AudioChunkEnvelope: Sendable {
+    let base64: String
+    let sampleRate: Int
 }
 
 struct StreamStartPayload: Encodable {
