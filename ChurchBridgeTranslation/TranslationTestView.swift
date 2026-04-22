@@ -13,10 +13,12 @@ struct TranslationTestView: View {
             ZStack {
                 background
 
-                if isLive {
-                    liveFeed
-                } else {
-                    idleCard
+                Group {
+                    if isLive {
+                        liveFeed
+                    } else {
+                        idleCard
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 18)
