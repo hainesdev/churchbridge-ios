@@ -672,8 +672,8 @@ private struct VerseSheet: View {
     @State private var selectedItemID: String
     @State private var chapterRequest: ChapterReaderRequest?
 
-    private let cardInk = Color(uiColor: .label)
-    private let cardSecondaryInk = Color(uiColor: .secondaryLabel)
+    private let cardInk = Color(red: 0.11, green: 0.11, blue: 0.13)
+    private let cardSecondaryInk = Color(red: 0.36, green: 0.37, blue: 0.41)
     private let chipInk = Color(red: 0.13, green: 0.13, blue: 0.15)
 
     init(segment: TranslationSegment, baseURL: URL?, churchID: String, settings: SettingsStore) {
@@ -902,6 +902,7 @@ private struct ChapterReaderSheet: View {
     @State private var showTableOfContents = false
 
     private let service = BibleVersionService()
+    private let maxLoadedChapters = 5
 
     init(request: ChapterReaderRequest, baseURL: URL?, churchID: String, settings: SettingsStore, showContentsOnAppear: Bool = false) {
         self.request = request
@@ -1114,6 +1115,7 @@ private struct ChapterReaderSheet: View {
                 chapter: request.chapter
             )
             loadedChapters.insert(LoadedBibleChapter(request: request, chapter: chapter), at: 0)
+            trimLoadedChapters(keeping: request)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1133,6 +1135,7 @@ private struct ChapterReaderSheet: View {
                 chapter: request.chapter
             )
             loadedChapters.append(LoadedBibleChapter(request: request, chapter: chapter))
+            trimLoadedChapters(keeping: request)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1168,6 +1171,27 @@ private struct ChapterReaderSheet: View {
             chapter: request.chapter,
             verse: request.highlightVerse
         )
+    }
+
+    private func trimLoadedChapters(keeping request: ChapterReaderRequest) {
+        guard loadedChapters.count > maxLoadedChapters else { return }
+        while loadedChapters.count > maxLoadedChapters {
+            guard let currentIndex = loadedChapters.firstIndex(where: {
+                $0.request.book == request.book && $0.request.chapter == request.chapter
+            }) else {
+                loadedChapters.removeFirst()
+                continue
+            }
+
+            let distanceToStart = currentIndex
+            let distanceToEnd = loadedChapters.count - currentIndex - 1
+
+            if distanceToStart > distanceToEnd {
+                loadedChapters.removeFirst()
+            } else {
+                loadedChapters.removeLast()
+            }
+        }
     }
 
     private var previousRequest: ChapterReaderRequest? {
