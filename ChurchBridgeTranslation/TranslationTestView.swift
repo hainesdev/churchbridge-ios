@@ -1347,10 +1347,12 @@ private struct BibleBookPickerSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    private var bookItems: [BibleBook] { books }
+
     var body: some View {
         NavigationStack {
             List {
-                ForEach(books, id: \.id) { book in
+                ForEach(bookItems, id: \BibleBook.bookID) { book in
                     Button {
                         onSelect(book)
                         dismiss()
