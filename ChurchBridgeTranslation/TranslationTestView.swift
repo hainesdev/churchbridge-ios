@@ -318,12 +318,14 @@ struct TranslationTestView: View {
     }
 
     private func verseTag(title: String, tint: Color) -> some View {
-        Text(title)
+        let label = Text(title)
             .font(.system(.caption, design: .rounded, weight: .bold))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(tint.opacity(0.14), in: Capsule())
-        .foregroundStyle(tint)
+
+        return label
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(tint.opacity(0.14), in: Capsule())
+            .foregroundStyle(tint)
     }
 
     private func featureRow(icon: String, iconColor: Color, title: String, detail: String) -> some View {
@@ -333,8 +335,12 @@ struct TranslationTestView: View {
                 .foregroundStyle(iconColor)
                 .frame(width: 26)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(.headline, design: .rounded, weight: .semibold)).foregroundStyle(.white)
-                Text(detail).font(.system(.subheadline, design: .rounded)).foregroundStyle(.white.opacity(0.70))
+                Text(title)
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(detail)
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.70))
             }
         }
     }
