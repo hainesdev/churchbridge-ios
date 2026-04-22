@@ -12,6 +12,11 @@ final class SettingsStore {
         static let captureMode = "churchbridge.captureMode"
         static let captureStrategy = "churchbridge.captureStrategy"
         static let translationTextSize = "churchbridge.translationTextSize"
+        static let lastBibleVersionSlug = "churchbridge.lastBibleVersionSlug"
+        static let lastBibleVersionName = "churchbridge.lastBibleVersionName"
+        static let lastBibleBook = "churchbridge.lastBibleBook"
+        static let lastBibleChapter = "churchbridge.lastBibleChapter"
+        static let lastBibleVerse = "churchbridge.lastBibleVerse"
     }
 
     private let defaults: UserDefaults
@@ -66,6 +71,42 @@ final class SettingsStore {
         var components = URLComponents(url: apiBaseURL, resolvingAgainstBaseURL: false)
         components?.scheme = apiBaseURL.scheme == "https" ? "wss" : "ws"
         return components?.url
+    }
+
+    var lastBibleVersionSlug: String? { defaults.string(forKey: Keys.lastBibleVersionSlug) }
+    var lastBibleVersionName: String? { defaults.string(forKey: Keys.lastBibleVersionName) }
+    var lastBibleBook: String? { defaults.string(forKey: Keys.lastBibleBook) }
+
+    var lastBibleChapter: Int? {
+        let value = defaults.integer(forKey: Keys.lastBibleChapter)
+        return value > 0 ? value : nil
+    }
+
+    var lastBibleVerse: Int? {
+        let value = defaults.integer(forKey: Keys.lastBibleVerse)
+        return value > 0 ? value : nil
+    }
+
+    var hasLastBibleLocation: Bool {
+        lastBibleVersionSlug != nil && lastBibleVersionName != nil && lastBibleBook != nil && lastBibleChapter != nil
+    }
+
+    func saveBibleLocation(
+        versionSlug: String,
+        versionName: String,
+        book: String,
+        chapter: Int,
+        verse: Int?
+    ) {
+        defaults.set(versionSlug, forKey: Keys.lastBibleVersionSlug)
+        defaults.set(versionName, forKey: Keys.lastBibleVersionName)
+        defaults.set(book, forKey: Keys.lastBibleBook)
+        defaults.set(chapter, forKey: Keys.lastBibleChapter)
+        if let verse {
+            defaults.set(verse, forKey: Keys.lastBibleVerse)
+        } else {
+            defaults.removeObject(forKey: Keys.lastBibleVerse)
+        }
     }
 
     private func normalizedURL(from string: String) -> URL? {

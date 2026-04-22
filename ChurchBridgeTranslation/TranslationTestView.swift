@@ -3,6 +3,7 @@ import SwiftUI
 struct TranslationTestView: View {
     @Bindable var viewModel: TranslationTestViewModel
     @State private var selectedSegment: TranslationSegment?
+    @State private var bibleReaderRequest: ChapterReaderRequest?
     @State private var scrollToLiveRequested = 0
     @State private var userPinnedToLive = true
     @State private var showDiagnostics = false
@@ -51,6 +52,14 @@ struct TranslationTestView: View {
 
                         Divider()
 
+                        if let lastBibleRequest {
+                            Button {
+                                bibleReaderRequest = lastBibleRequest
+                            } label: {
+                                Label("Open Bible", systemImage: "book.closed")
+                            }
+                        }
+
                         Button {
                             showDiagnostics = true
                         } label: {
@@ -88,7 +97,10 @@ struct TranslationTestView: View {
                     .presentationDetents([.medium])
             }
             .sheet(item: $selectedSegment) { segment in
-                VerseSheet(segment: segment, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID)
+                VerseSheet(segment: segment, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID, settings: viewModel.settings)
+            }
+            .sheet(item: $bibleReaderRequest) { request in
+                ChapterReaderSheet(request: request, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID, settings: viewModel.settings)
             }
             .task {
                 await viewModel.onAppear()
@@ -106,6 +118,25 @@ struct TranslationTestView: View {
 
     private var isLive: Bool {
         viewModel.isRunning || viewModel.streamStatus == .connecting || viewModel.streamStatus == .reconnecting
+    }
+
+    private var lastBibleRequest: ChapterReaderRequest? {
+        guard
+            let versionSlug = viewModel.settings.lastBibleVersionSlug,
+            let versionName = viewModel.settings.lastBibleVersionName,
+            let book = viewModel.settings.lastBibleBook,
+            let chapter = viewModel.settings.lastBibleChapter
+        else {
+            return nil
+        }
+
+        return ChapterReaderRequest(
+            versionSlug: versionSlug,
+            versionName: versionName,
+            book: book,
+            chapter: chapter,
+            highlightVerse: viewModel.settings.lastBibleVerse
+        )
     }
 
     private var background: some View {
@@ -598,10 +629,18 @@ private struct ChapterReaderRequest: Identifiable, Equatable {
     var id: String { "\(versionSlug)-\(book)-\(chapter)-\(highlightVerse ?? 0)" }
 }
 
+private struct LoadedBibleChapter: Identifiable, Equatable {
+    let request: ChapterReaderRequest
+    let chapter: ScriptureChapter
+
+    var id: String { "\(request.book)-\(request.chapter)" }
+}
+
 private struct VerseSheet: View {
     let segment: TranslationSegment
     let baseURL: URL?
     let churchID: String
+    let settings: SettingsStore
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedItemID: String
@@ -611,10 +650,11 @@ private struct VerseSheet: View {
     private let cardSecondaryInk = Color(uiColor: .secondaryLabel)
     private let chipInk = Color(red: 0.13, green: 0.13, blue: 0.15)
 
-    init(segment: TranslationSegment, baseURL: URL?, churchID: String) {
+    init(segment: TranslationSegment, baseURL: URL?, churchID: String, settings: SettingsStore) {
         self.segment = segment
         self.baseURL = baseURL
         self.churchID = churchID
+        self.settings = settings
 
         let defaultID: String
         if let verse = segment.verseDetected {
@@ -671,7 +711,7 @@ private struct VerseSheet: View {
                 }
             }
             .sheet(item: $chapterRequest) { request in
-                ChapterReaderSheet(request: request, baseURL: baseURL, churchID: churchID)
+                ChapterReaderSheet(request: request, baseURL: baseURL, churchID: churchID, settings: settings)
             }
         }
     }
@@ -822,20 +862,25 @@ private struct ChapterReaderSheet: View {
     let request: ChapterReaderRequest
     let baseURL: URL?
     let churchID: String
+    let settings: SettingsStore
 
     @Environment(\.dismiss) private var dismiss
     @State private var currentRequest: ChapterReaderRequest
-    @State private var chapter: ScriptureChapter?
+    @State private var loadedChapters: [LoadedBibleChapter] = []
     @State private var books: [BibleBook] = []
     @State private var errorMessage = ""
     @State private var isLoading = true
+    @State private var isLoadingPrevious = false
+    @State private var isLoadingNext = false
+    @State private var showTableOfContents = false
 
     private let service = BibleVersionService()
 
-    init(request: ChapterReaderRequest, baseURL: URL?, churchID: String) {
+    init(request: ChapterReaderRequest, baseURL: URL?, churchID: String, settings: SettingsStore) {
         self.request = request
         self.baseURL = baseURL
         self.churchID = churchID
+        self.settings = settings
         _currentRequest = State(initialValue: request)
     }
 
@@ -844,41 +889,25 @@ private struct ChapterReaderSheet: View {
             Group {
                 if isLoading {
                     ProgressView("Loading \(currentRequest.book) \(currentRequest.chapter)...")
-                } else if let chapter {
+                } else if !loadedChapters.isEmpty {
                     ScrollViewReader { proxy in
                         ScrollView {
                             VStack(alignment: .leading, spacing: 18) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(chapter.reference)
-                                        .font(.system(.title2, design: .rounded, weight: .bold))
-                                        .foregroundStyle(.primary)
-                                    Text(chapter.version.name)
-                                        .font(.system(.subheadline, design: .rounded))
-                                        .foregroundStyle(.secondary)
-                                    if let highlightVerse = currentRequest.highlightVerse {
-                                        Text("Opened at verse \(highlightVerse)")
-                                            .font(.system(.footnote, design: .rounded, weight: .semibold))
-                                            .foregroundStyle(Color.accentColor)
-                                    }
+                                if isLoadingPrevious {
+                                    ProgressView()
+                                        .frame(maxWidth: .infinity)
                                 }
 
-                                chapterNavigation
+                                ForEach(loadedChapters) { loaded in
+                                    chapterSection(for: loaded)
+                                        .onAppear {
+                                            Task { await handleChapterAppearance(loaded) }
+                                        }
+                                }
 
-                                ForEach(chapter.verses, id: \.reference) { verse in
-                                    HStack(alignment: .top, spacing: 12) {
-                                        Text("\(verse.verse)")
-                                            .font(.system(.headline, design: .rounded, weight: .bold))
-                                            .foregroundStyle(verse.verse == currentRequest.highlightVerse ? Color.accentColor : .secondary)
-                                            .frame(width: 30, alignment: .leading)
-                                        Text(verse.text)
-                                            .font(.system(.body, design: .rounded))
-                                            .foregroundStyle(.primary)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 10)
-                                    .background(verse.verse == currentRequest.highlightVerse ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                    .id(verse.reference)
+                                if isLoadingNext {
+                                    ProgressView()
+                                        .frame(maxWidth: .infinity)
                                 }
                             }
                             .padding(16)
@@ -903,8 +932,20 @@ private struct ChapterReaderSheet: View {
             }
             .navigationTitle("Bible")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showTableOfContents = true
+                    } label: {
+                        Label("Contents", systemImage: "list.bullet")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showTableOfContents) {
+                BibleContentsSheet(books: books, currentRequest: currentRequest) { request in
+                    Task { await jumpTo(request: request) }
                 }
             }
         }
@@ -923,39 +964,19 @@ private struct ChapterReaderSheet: View {
                 churchID: churchID,
                 versionSlug: currentRequest.versionSlug
             )
-            chapter = try await service.fetchChapter(
+            let chapter = try await service.fetchChapter(
                 baseURL: baseURL,
                 churchID: churchID,
                 versionSlug: currentRequest.versionSlug,
                 book: currentRequest.book,
                 chapter: currentRequest.chapter
             )
+            loadedChapters = [LoadedBibleChapter(request: currentRequest, chapter: chapter)]
+            persistLocation(for: currentRequest)
         } catch {
             errorMessage = error.localizedDescription
         }
         isLoading = false
-    }
-
-    private var chapterNavigation: some View {
-        HStack(spacing: 12) {
-            Button {
-                Task { await moveChapter(by: -1) }
-            } label: {
-                Label("Previous", systemImage: "chevron.left")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .disabled(previousChapterRequest == nil)
-
-            Button {
-                Task { await moveChapter(by: 1) }
-            } label: {
-                Label("Next", systemImage: "chevron.right")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .disabled(nextChapterRequest == nil)
-        }
     }
 
     private var currentBookIndex: Int? {
@@ -983,31 +1004,6 @@ private struct ChapterReaderSheet: View {
         return ChapterReaderRequest(versionSlug: currentRequest.versionSlug, versionName: currentRequest.versionName, book: nextBook.bookName, chapter: 1, highlightVerse: nil)
     }
 
-    private func moveChapter(by direction: Int) async {
-        let nextRequest = direction < 0 ? previousChapterRequest : nextChapterRequest
-        guard let nextRequest else { return }
-        await loadChapter(for: nextRequest)
-    }
-
-    private func loadChapter(for request: ChapterReaderRequest) async {
-        guard let baseURL else { return }
-        isLoading = true
-        errorMessage = ""
-        currentRequest = request
-        do {
-            chapter = try await service.fetchChapter(
-                baseURL: baseURL,
-                churchID: churchID,
-                versionSlug: request.versionSlug,
-                book: request.book,
-                chapter: request.chapter
-            )
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isLoading = false
-    }
-
     private func scrollToHighlight(using proxy: ScrollViewProxy) {
         guard let highlightVerse = currentRequest.highlightVerse else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -1015,5 +1011,249 @@ private struct ChapterReaderSheet: View {
                 proxy.scrollTo("\(currentRequest.book) \(currentRequest.chapter):\(highlightVerse)", anchor: .center)
             }
         }
+    }
+
+    private func chapterSection(for loaded: LoadedBibleChapter) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(loaded.chapter.reference)
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .foregroundStyle(.primary)
+                Text(loaded.chapter.version.name)
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+                if loaded.request.book == currentRequest.book, loaded.request.chapter == currentRequest.chapter, let highlightVerse = loaded.request.highlightVerse {
+                    Text("Opened at verse \(highlightVerse)")
+                        .font(.system(.footnote, design: .rounded, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+
+            ForEach(loaded.chapter.verses, id: \.reference) { verse in
+                HStack(alignment: .top, spacing: 12) {
+                    Text("\(verse.verse)")
+                        .font(.system(.headline, design: .rounded, weight: .bold))
+                        .foregroundStyle(verse.verse == loaded.request.highlightVerse && loaded.request.book == currentRequest.book && loaded.request.chapter == currentRequest.chapter ? Color.accentColor : .secondary)
+                        .frame(width: 30, alignment: .leading)
+                    Text(verse.text)
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(verse.verse == loaded.request.highlightVerse && loaded.request.book == currentRequest.book && loaded.request.chapter == currentRequest.chapter ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .id(verse.reference)
+            }
+        }
+    }
+
+    private func handleChapterAppearance(_ loaded: LoadedBibleChapter) async {
+        currentRequest = ChapterReaderRequest(
+            versionSlug: loaded.request.versionSlug,
+            versionName: loaded.request.versionName,
+            book: loaded.request.book,
+            chapter: loaded.request.chapter,
+            highlightVerse: loaded.request.highlightVerse
+        )
+        persistLocation(for: currentRequest)
+
+        if loaded.id == loadedChapters.first?.id, let previousRequest, !isLoadingPrevious {
+            await prependChapter(previousRequest)
+        }
+
+        if loaded.id == loadedChapters.last?.id, let nextRequest, !isLoadingNext {
+            await appendChapter(nextRequest)
+        }
+    }
+
+    private func prependChapter(_ request: ChapterReaderRequest) async {
+        guard let baseURL else { return }
+        guard !loadedChapters.contains(where: { $0.request.book == request.book && $0.request.chapter == request.chapter }) else { return }
+        isLoadingPrevious = true
+        defer { isLoadingPrevious = false }
+        do {
+            let chapter = try await service.fetchChapter(
+                baseURL: baseURL,
+                churchID: churchID,
+                versionSlug: request.versionSlug,
+                book: request.book,
+                chapter: request.chapter
+            )
+            loadedChapters.insert(LoadedBibleChapter(request: request, chapter: chapter), at: 0)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func appendChapter(_ request: ChapterReaderRequest) async {
+        guard let baseURL else { return }
+        guard !loadedChapters.contains(where: { $0.request.book == request.book && $0.request.chapter == request.chapter }) else { return }
+        isLoadingNext = true
+        defer { isLoadingNext = false }
+        do {
+            let chapter = try await service.fetchChapter(
+                baseURL: baseURL,
+                churchID: churchID,
+                versionSlug: request.versionSlug,
+                book: request.book,
+                chapter: request.chapter
+            )
+            loadedChapters.append(LoadedBibleChapter(request: request, chapter: chapter))
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func jumpTo(request: ChapterReaderRequest) async {
+        guard let baseURL else { return }
+        showTableOfContents = false
+        isLoading = true
+        errorMessage = ""
+        currentRequest = request
+        do {
+            let chapter = try await service.fetchChapter(
+                baseURL: baseURL,
+                churchID: churchID,
+                versionSlug: request.versionSlug,
+                book: request.book,
+                chapter: request.chapter
+            )
+            loadedChapters = [LoadedBibleChapter(request: request, chapter: chapter)]
+            persistLocation(for: request)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func persistLocation(for request: ChapterReaderRequest) {
+        settings.saveBibleLocation(
+            versionSlug: request.versionSlug,
+            versionName: request.versionName,
+            book: request.book,
+            chapter: request.chapter,
+            verse: request.highlightVerse
+        )
+    }
+
+    private var previousRequest: ChapterReaderRequest? {
+        guard let first = loadedChapters.first else { return nil }
+        return request(before: first.request)
+    }
+
+    private var nextRequest: ChapterReaderRequest? {
+        guard let last = loadedChapters.last else { return nil }
+        return request(after: last.request)
+    }
+
+    private func request(before request: ChapterReaderRequest) -> ChapterReaderRequest? {
+        guard let currentBookIndex = books.firstIndex(where: { $0.bookName == request.book }) else { return nil }
+        if request.chapter > 1 {
+            return ChapterReaderRequest(versionSlug: request.versionSlug, versionName: request.versionName, book: request.book, chapter: request.chapter - 1, highlightVerse: nil)
+        }
+        guard currentBookIndex > 0 else { return nil }
+        let previousBook = books[currentBookIndex - 1]
+        return ChapterReaderRequest(versionSlug: request.versionSlug, versionName: request.versionName, book: previousBook.bookName, chapter: previousBook.chapterCount, highlightVerse: nil)
+    }
+
+    private func request(after request: ChapterReaderRequest) -> ChapterReaderRequest? {
+        guard let currentBookIndex = books.firstIndex(where: { $0.bookName == request.book }) else { return nil }
+        let currentBook = books[currentBookIndex]
+        if request.chapter < currentBook.chapterCount {
+            return ChapterReaderRequest(versionSlug: request.versionSlug, versionName: request.versionName, book: request.book, chapter: request.chapter + 1, highlightVerse: nil)
+        }
+        guard currentBookIndex + 1 < books.count else { return nil }
+        let nextBook = books[currentBookIndex + 1]
+        return ChapterReaderRequest(versionSlug: request.versionSlug, versionName: request.versionName, book: nextBook.bookName, chapter: 1, highlightVerse: nil)
+    }
+}
+
+private struct BibleContentsSheet: View {
+    let books: [BibleBook]
+    let currentRequest: ChapterReaderRequest
+    let onSelect: (ChapterReaderRequest) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedBookName: String
+
+    init(books: [BibleBook], currentRequest: ChapterReaderRequest, onSelect: @escaping (ChapterReaderRequest) -> Void) {
+        self.books = books
+        self.currentRequest = currentRequest
+        self.onSelect = onSelect
+        _selectedBookName = State(initialValue: currentRequest.book)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                List(books) { book in
+                    Button {
+                        selectedBookName = book.bookName
+                    } label: {
+                        HStack {
+                            Text(book.bookName)
+                            Spacer()
+                            if book.bookName == currentRequest.book {
+                                Text("\(currentRequest.chapter)")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .frame(maxHeight: 280)
+
+                Divider()
+
+                if let selectedBook {
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 12)], spacing: 12) {
+                            ForEach(1...selectedBook.chapterCount, id: \.self) { chapter in
+                                Button {
+                                    onSelect(
+                                        ChapterReaderRequest(
+                                            versionSlug: currentRequest.versionSlug,
+                                            versionName: currentRequest.versionName,
+                                            book: selectedBook.bookName,
+                                            chapter: chapter,
+                                            highlightVerse: nil
+                                        )
+                                    )
+                                    dismiss()
+                                } label: {
+                                    Text("\(chapter)")
+                                        .font(.system(.body, design: .rounded, weight: .semibold))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 12)
+                                        .background(chapterFill(for: selectedBook, chapter: chapter), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                        .foregroundStyle(chapterForeground(for: selectedBook, chapter: chapter))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(16)
+                    }
+                }
+            }
+            .navigationTitle("Contents")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var selectedBook: BibleBook? {
+        books.first(where: { $0.bookName == selectedBookName }) ?? books.first
+    }
+
+    private func chapterFill(for book: BibleBook, chapter: Int) -> Color {
+        book.bookName == currentRequest.book && chapter == currentRequest.chapter ? Color.accentColor.opacity(0.18) : Color(uiColor: .secondarySystemBackground)
+    }
+
+    private func chapterForeground(for book: BibleBook, chapter: Int) -> Color {
+        book.bookName == currentRequest.book && chapter == currentRequest.chapter ? .accentColor : Color(uiColor: .label)
     }
 }
