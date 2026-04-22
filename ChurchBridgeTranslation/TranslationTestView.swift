@@ -1350,7 +1350,7 @@ private struct BibleBookPickerSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(books) { book in
+                ForEach(books, id: \.id) { book in
                     Button {
                         onSelect(book)
                         dismiss()
