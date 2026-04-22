@@ -31,4 +31,34 @@ struct BibleVersionService {
         guard 200..<300 ~= http.statusCode else { throw NetworkError.badResponse(http.statusCode) }
         return try JSONDecoder().decode(BibleVersionResponse.self, from: data).versions
     }
+
+    func fetchChapter(
+        baseURL: URL,
+        churchID: String,
+        versionSlug: String,
+        book: String,
+        chapter: Int
+    ) async throws -> ScriptureChapter {
+        var components = URLComponents(
+            url: baseURL
+                .appending(path: "api")
+                .appending(path: "churches")
+                .appending(path: churchID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? churchID)
+                .appending(path: "bibles")
+                .appending(path: versionSlug)
+                .appending(path: "chapter"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "book", value: book),
+            URLQueryItem(name: "chapter", value: String(chapter)),
+        ]
+
+        guard let endpoint = components?.url else { throw NetworkError.invalidBaseURL }
+
+        let (data, response) = try await URLSession.shared.data(from: endpoint)
+        guard let http = response as? HTTPURLResponse else { throw NetworkError.badResponse(-1) }
+        guard 200..<300 ~= http.statusCode else { throw NetworkError.badResponse(http.statusCode) }
+        return try JSONDecoder().decode(ScriptureChapter.self, from: data)
+    }
 }

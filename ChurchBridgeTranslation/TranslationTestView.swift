@@ -5,42 +5,53 @@ struct TranslationTestView: View {
     @State private var selectedSegment: TranslationSegment?
     @State private var scrollToLiveRequested = 0
     @State private var userPinnedToLive = true
+    @State private var showDiagnostics = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                LinearGradient(
-                    colors: [Color(red: 0.06, green: 0.08, blue: 0.11), Color(red: 0.11, green: 0.16, blue: 0.14)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                background
 
-                VStack(spacing: 16) {
-                    headerCard
-                    if viewModel.isRunning || viewModel.streamStatus == .connecting || viewModel.streamStatus == .reconnecting {
+                VStack(spacing: 14) {
+                    controlBar
+                    if isLive {
                         liveFeed
                     } else {
                         idleCard
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 20)
+                .padding(.vertical, 18)
             }
-            .navigationTitle("Translation Test")
+            .navigationTitle("Interpreter")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Settings") { viewModel.showSettings = true }
-                        .tint(.white)
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        showDiagnostics = true
+                    } label: {
+                        Image(systemName: "waveform.path.ecg")
+                    }
+                    .tint(.white)
+
+                    Button {
+                        viewModel.showSettings = true
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                    }
+                    .tint(.white)
                 }
             }
             .sheet(isPresented: $viewModel.showSettings) {
                 SettingsSheet(viewModel: viewModel)
                     .presentationDetents([.large])
             }
+            .sheet(isPresented: $showDiagnostics) {
+                DiagnosticsSheet(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+            }
             .sheet(item: $selectedSegment) { segment in
-                VerseSheet(segment: segment)
+                VerseSheet(segment: segment, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID)
             }
             .task {
                 await viewModel.onAppear()
@@ -48,30 +59,46 @@ struct TranslationTestView: View {
         }
     }
 
-    private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private var isLive: Bool {
+        viewModel.isRunning || viewModel.streamStatus == .connecting || viewModel.streamStatus == .reconnecting
+    }
+
+    private var background: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(red: 0.05, green: 0.07, blue: 0.10), Color(red: 0.08, green: 0.14, blue: 0.11)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            RadialGradient(
+                colors: [Color(red: 0.20, green: 0.35, blue: 0.28).opacity(0.30), .clear],
+                center: .topTrailing,
+                startRadius: 40,
+                endRadius: 420
+            )
+            .ignoresSafeArea()
+        }
+    }
+
+    private var controlBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(viewModel.settings.churchID)
                         .font(.system(.headline, design: .rounded, weight: .semibold))
                         .foregroundStyle(.white)
-                    Text("Native iPhone capture with the existing Church Bridge stream contract.")
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.7))
+                    Text(viewModel.isRunning ? "Listening for live translation" : "Ready to start listening")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.72))
                 }
+
                 Spacer()
                 statusPill
             }
 
             HStack(spacing: 10) {
-                metricChip(title: "Display", value: viewModel.displayConnected ? "Connected" : "Reconnecting", color: viewModel.displayConnected ? .green : .orange)
-                metricChip(title: "Speech", value: viewModel.diagnostics.speechDetected ? "Detected" : "Listening", color: viewModel.diagnostics.speechDetected ? .green : .blue)
-                if viewModel.diagnostics.clipping {
-                    metricChip(title: "Input", value: "Clipping", color: .red)
-                }
-            }
-
-            HStack(spacing: 12) {
                 Button {
                     Task {
                         if viewModel.isRunning {
@@ -81,15 +108,28 @@ struct TranslationTestView: View {
                         }
                     }
                 } label: {
-                    Text(viewModel.isRunning ? "Stop Test" : "Start Test")
+                    Label(viewModel.isRunning ? "Stop" : "Start", systemImage: viewModel.isRunning ? "stop.fill" : "play.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(ActionButtonStyle(fill: viewModel.isRunning ? .red : .green))
 
-                Button("Reconnect Feed") {
-                    Task { await viewModel.restartDisplayConnection() }
+                if !viewModel.displayConnected || viewModel.streamStatus == .failed {
+                    Button {
+                        Task { await viewModel.restartDisplayConnection() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(ActionButtonStyle(fill: .white.opacity(0.10), foreground: .white))
                 }
-                .buttonStyle(ActionButtonStyle(fill: .gray.opacity(0.3), foreground: .white))
+            }
+
+            HStack(spacing: 8) {
+                metricChip(title: "Feed", value: viewModel.displayConnected ? "Connected" : "Reconnecting", color: viewModel.displayConnected ? .green : .orange)
+                metricChip(title: "Audio", value: viewModel.diagnostics.speechDetected ? "Active" : "Listening", color: viewModel.diagnostics.speechDetected ? .green : .blue)
+                if viewModel.diagnostics.clipping {
+                    metricChip(title: "Input", value: "Clipping", color: .red)
+                }
             }
 
             if !viewModel.latestError.isEmpty {
@@ -98,50 +138,39 @@ struct TranslationTestView: View {
                     .foregroundStyle(Color(red: 1.0, green: 0.72, blue: 0.72))
             }
         }
-        .padding(18)
+        .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1))
     }
 
     private var idleCard: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Ready for field testing")
-                .font(.system(.title3, design: .rounded, weight: .bold))
+            Text("Personal interpreter, built for reading")
+                .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
-            Text("Use Voice Processing with Apple Voice Passthrough. Alternate capture strategies stay available for remote diagnostics, not normal live use.")
+
+            Text("The live screen keeps the focus on translated text. Advanced diagnostics and configuration stay behind the small icons in the top-right corner.")
                 .font(.system(.body, design: .rounded))
-                .foregroundStyle(.white.opacity(0.76))
-            Text("Live capture strategy: \(AudioCaptureStrategy.liveDefault.rawValue)")
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.72))
-            diagnosticsGrid
+                .foregroundStyle(.white.opacity(0.78))
+
+            VStack(alignment: .leading, spacing: 10) {
+                featureRow(icon: "captions.bubble.fill", title: "Caption-first layout", detail: "English stays prominent, with the original Spanish tucked underneath.")
+                featureRow(icon: "book.closed.fill", title: "Bilingual scripture reader", detail: "Verse pills open explanation plus passages in both languages.")
+                featureRow(icon: "rectangle.expand.vertical", title: "Expandable chapter reading", detail: "Read beyond the quoted range without leaving the app.")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
+        .padding(22)
         .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 1))
     }
 
     private var liveFeed: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    diagnosticsGrid
-
-                    if viewModel.displayFeed.snapshot.segments.isEmpty,
-                       activeSpanish.isEmpty,
-                       viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
-                        Text(waitingHint)
-                            .font(.system(.callout, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.68))
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 24)
+                    if viewModel.displayFeed.snapshot.segments.isEmpty, activeSpanish.isEmpty, viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
+                        waitingCard
                     }
 
                     ForEach(viewModel.displayFeed.snapshot.segments) { segment in
@@ -150,60 +179,39 @@ struct TranslationTestView: View {
                                 selectedSegment = segment
                             }
                         } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack(alignment: .top) {
-                                    Text(segment.english)
-                                        .font(.system(.title3, design: .rounded, weight: .semibold))
-                                        .foregroundStyle(segment.id == viewModel.displayFeed.snapshot.flashingID ? Color(red: 0.78, green: 0.9, blue: 1.0) : .white)
-                                        .multilineTextAlignment(.leading)
-                                    Spacer()
+                            VStack(alignment: .leading, spacing: 14) {
+                                if segment.verseDetected != nil || !segment.verseSuggestions.isEmpty {
+                                    versePillRow(for: segment)
                                 }
 
-                                if let verse = segment.verseDetected {
-                                    verseTag(title: verse.reference, tint: Color.orange)
-                                }
-
-                                if !segment.verseSuggestions.isEmpty {
-                                    ScrollView(.horizontal, showsIndicators: false) {
-                                        HStack(spacing: 8) {
-                                            ForEach(segment.verseSuggestions, id: \.reference) { suggestion in
-                                                verseTag(title: suggestion.reference, tint: Color.blue)
-                                            }
-                                        }
-                                    }
-                                }
+                                Text(segment.english)
+                                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(segment.id == viewModel.displayFeed.snapshot.flashingID ? Color(red: 0.84, green: 0.94, blue: 1.0) : .white)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
 
                                 Text(segment.spanish)
-                                    .font(.system(.subheadline, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.55))
+                                    .font(.system(.body, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.58))
                                     .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                            .padding(20)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(18)
-                            .background(Color.white.opacity(segment.pendingCompletion ? 0.05 : 0.09), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .background(cardBackground(for: segment), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(segment.id == viewModel.displayFeed.snapshot.flashingID ? 0.22 : 0.06), lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                         .id(segment.id)
                     }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
-                            Text("\(viewModel.displayFeed.snapshot.partialEnglish)\u{258C}")
-                                .font(.system(.title3, design: .rounded, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.74))
-                        }
-                        if !activeSpanish.isEmpty {
-                            Text(activeSpanish)
-                                .font(.system(.subheadline, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.45))
-                        }
+                    if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty || !activeSpanish.isEmpty {
+                        partialCard
                     }
-                    .padding(.bottom, 18)
 
-                    Color.clear
-                        .frame(height: 1)
-                        .id("live-bottom")
+                    Color.clear.frame(height: 1).id("live-bottom")
                 }
+                .padding(.bottom, 18)
             }
             .scrollIndicators(.hidden)
             .overlay(alignment: .bottomTrailing) {
@@ -212,7 +220,7 @@ struct TranslationTestView: View {
                         userPinnedToLive = true
                         scrollToLiveRequested += 1
                     } label: {
-                        Text("Live")
+                        Label("Live", systemImage: "arrow.down.to.line")
                             .font(.system(.caption, design: .rounded, weight: .semibold))
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
@@ -226,64 +234,73 @@ struct TranslationTestView: View {
             }
             .onChange(of: viewModel.displayFeed.snapshot.lastVisibleSegmentID) { _, _ in
                 guard userPinnedToLive else { return }
-                withAnimation(.easeOut(duration: 0.25)) {
-                    proxy.scrollTo("live-bottom", anchor: .bottom)
-                }
+                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("live-bottom", anchor: .bottom) }
             }
             .onChange(of: scrollToLiveRequested) { _, _ in
-                withAnimation(.easeOut(duration: 0.25)) {
-                    proxy.scrollTo("live-bottom", anchor: .bottom)
-                }
+                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("live-bottom", anchor: .bottom) }
             }
-            .simultaneousGesture(
-                DragGesture().onChanged { _ in
-                    userPinnedToLive = false
-                }
-            )
+            .simultaneousGesture(DragGesture().onChanged { _ in userPinnedToLive = false })
         }
     }
 
-    private var diagnosticsGrid: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                diagnosticCard(title: "Route", value: viewModel.diagnostics.routeName, detail: routeDetail)
-                diagnosticCard(title: "Sample Rate", value: "\(Int(viewModel.diagnostics.inputSampleRate)) Hz", detail: sampleRateDetail)
+    private var waitingCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Waiting for speech")
+                .font(.system(.headline, design: .rounded, weight: .semibold))
+                .foregroundStyle(.white)
+            Text(waitingHint)
+                .font(.system(.callout, design: .rounded))
+                .foregroundStyle(.white.opacity(0.72))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var partialCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
+                Text("\(viewModel.displayFeed.snapshot.partialEnglish)\u{258C}")
+                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.78))
             }
-            HStack(spacing: 12) {
-                diagnosticCard(title: "Voice Processing", value: viewModel.diagnostics.voiceProcessingEnabled ? "Enabled" : "Off", detail: voiceProcessingDetail)
-                diagnosticCard(title: "Echo Cancel", value: viewModel.diagnostics.echoCancelledInputEnabled ? "Enabled" : "Off", detail: viewModel.diagnostics.echoCancelledInputAvailable ? "Supported on this route" : "Unavailable")
-            }
-            HStack(spacing: 12) {
-                diagnosticCard(title: "Capture Path", value: viewModel.diagnostics.capturePath, detail: viewModel.diagnostics.fallbackReason.isEmpty ? "Preferred native path active" : viewModel.diagnostics.fallbackReason)
-                diagnosticCard(title: "Input Level", value: percent(viewModel.diagnostics.rmsLevel), detail: viewModel.diagnostics.speechDetected ? "Speech active" : "Room tone")
-                diagnosticCard(title: "Chunks Emitted", value: "\(viewModel.interpreterChunksObserved)", detail: relativeTime(viewModel.interpreterLastChunkObservedAt))
-            }
-            HStack(spacing: 12) {
-                diagnosticCard(title: "Chunks Sent", value: "\(viewModel.interpreterChunksSent)", detail: relativeTime(viewModel.interpreterLastChunkSentAt))
-                diagnosticCard(title: "Send Failures", value: "\(viewModel.interpreterSendFailures)", detail: relativeTime(viewModel.interpreterLastSendFailureAt))
+            if !activeSpanish.isEmpty {
+                Text(activeSpanish)
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.46))
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func versePillRow(for segment: TranslationSegment) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if let verse = segment.verseDetected {
+                    verseTag(title: verse.reference, subtitle: "Detected", tint: .orange)
+                }
+                ForEach(segment.verseSuggestions, id: \.reference) { suggestion in
+                    verseTag(title: suggestion.reference, subtitle: "Suggested", tint: .blue)
+                }
+            }
+        }
+    }
+
+    private func cardBackground(for segment: TranslationSegment) -> Color {
+        segment.id == viewModel.displayFeed.snapshot.flashingID ? Color.white.opacity(0.13) : Color.white.opacity(segment.pendingCompletion ? 0.05 : 0.09)
     }
 
     private var statusPill: some View {
         let color: Color
         let text: String
         switch viewModel.streamStatus {
-        case .idle:
-            color = .gray
-            text = "Idle"
-        case .connecting:
-            color = .blue
-            text = "Connecting"
-        case .connected:
-            color = .green
-            text = "Live"
-        case .reconnecting:
-            color = .orange
-            text = "Reconnecting"
-        case .failed:
-            color = .red
-            text = "Error"
+        case .idle: color = .gray; text = "Idle"
+        case .connecting: color = .blue; text = "Connecting"
+        case .connected: color = .green; text = "Live"
+        case .reconnecting: color = .orange; text = "Reconnecting"
+        case .failed: color = .red; text = "Error"
         }
 
         return Label(text, systemImage: "waveform")
@@ -308,51 +325,40 @@ struct TranslationTestView: View {
         .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private func diagnosticCard(title: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.5))
-            Text(value)
-                .font(.system(.headline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.white)
-            Text(detail)
-                .font(.system(.caption, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
+    private func verseTag(title: String, subtitle: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(.caption, design: .rounded, weight: .bold))
+            Text(subtitle.uppercased()).font(.system(size: 9, weight: .bold, design: .rounded))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(tint.opacity(0.14), in: Capsule())
+        .foregroundStyle(tint)
     }
 
-    private func verseTag(title: String, tint: Color) -> some View {
-        Text(title)
-            .font(.system(.caption, design: .rounded, weight: .bold))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(tint.opacity(0.18), in: Capsule())
-            .foregroundStyle(tint)
+    private func featureRow(icon: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Color(red: 0.70, green: 0.90, blue: 0.84))
+                .frame(width: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(.headline, design: .rounded, weight: .semibold)).foregroundStyle(.white)
+                Text(detail).font(.system(.subheadline, design: .rounded)).foregroundStyle(.white.opacity(0.70))
+            }
+        }
     }
 
     private var waitingHint: String {
-        if viewModel.diagnostics.clipping {
-            return "Input is clipping. Move the phone farther from the speaker or lower the source level."
-        }
-        if viewModel.diagnostics.rmsLevel < 0.015 {
-            return "Input is low. Move the phone closer to the preacher or PA."
-        }
-        if let lastInterimAt = viewModel.displayFeed.snapshot.lastInterimAt,
-           viewModel.displayFeed.snapshot.lastFinalAt == nil,
-           Date().timeIntervalSince(lastInterimAt) > 6 {
+        if viewModel.diagnostics.clipping { return "Input is clipping. Move the phone farther from the speaker or lower the source level." }
+        if viewModel.diagnostics.rmsLevel < 0.015 { return "Input is low. Move the phone closer to the preacher or PA." }
+        if let lastInterimAt = viewModel.displayFeed.snapshot.lastInterimAt, viewModel.displayFeed.snapshot.lastFinalAt == nil, Date().timeIntervalSince(lastInterimAt) > 6 {
             return "Interim speech is arriving, but STT is not settling on a final phrase yet."
         }
         if viewModel.displayFeed.snapshot.lastFinalAt != nil && viewModel.displayFeed.snapshot.lastTranslationAt == nil {
             return "Spanish finals are arriving. Waiting for committed English."
         }
-        if let lastFinalAt = viewModel.displayFeed.snapshot.lastFinalAt,
-           let lastTranslationAt = viewModel.displayFeed.snapshot.lastTranslationAt,
-           lastTranslationAt < lastFinalAt,
-           Date().timeIntervalSince(lastFinalAt) > 6 {
+        if let lastFinalAt = viewModel.displayFeed.snapshot.lastFinalAt, let lastTranslationAt = viewModel.displayFeed.snapshot.lastTranslationAt, lastTranslationAt < lastFinalAt, Date().timeIntervalSince(lastFinalAt) > 6 {
             return "Spanish finals are arriving, but the translation stage is lagging behind."
         }
         return "Listening for speech..."
@@ -360,42 +366,9 @@ struct TranslationTestView: View {
 
     private var activeSpanish: String {
         let lines = viewModel.displayFeed.snapshot.spanishLines.joined(separator: " ")
-        if lines.isEmpty {
-            return viewModel.displayFeed.snapshot.partialSpanish
-        }
-        if viewModel.displayFeed.snapshot.partialSpanish.isEmpty {
-            return lines
-        }
+        if lines.isEmpty { return viewModel.displayFeed.snapshot.partialSpanish }
+        if viewModel.displayFeed.snapshot.partialSpanish.isEmpty { return lines }
         return "\(lines) \(viewModel.displayFeed.snapshot.partialSpanish)"
-    }
-
-    private var routeDetail: String {
-        let outputs = viewModel.diagnostics.routeOutputs.joined(separator: ", ")
-        return outputs.isEmpty ? "No active output route" : outputs
-    }
-
-    private var sampleRateDetail: String {
-        let format = viewModel.diagnostics.inputFormatDescription
-        if format.isEmpty {
-            return "Emit \(Int(viewModel.diagnostics.emittedSampleRate)) Hz | chunk \(viewModel.diagnostics.chunkSampleCount)"
-        }
-        return "\(format) to \(Int(viewModel.diagnostics.emittedSampleRate)) Hz | chunk \(viewModel.diagnostics.chunkSampleCount)"
-    }
-
-    private var voiceProcessingDetail: String {
-        let agc = viewModel.diagnostics.voiceProcessingAGCEnabled ? "AGC on" : "AGC off"
-        return "\(viewModel.settings.captureMode.rawValue) | \(agc)"
-    }
-
-    private func percent(_ value: Float) -> String {
-        "\(Int((value * 100).rounded()))%"
-    }
-
-    private func relativeTime(_ date: Date?) -> String {
-        guard let date else { return "No audio sent yet" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return "Last \(formatter.localizedString(for: date, relativeTo: .now))"
     }
 }
 
@@ -420,7 +393,7 @@ private struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Backend") {
+                Section("Connection") {
                     TextField("Base URL", text: $viewModel.settings.baseURLString)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
@@ -429,10 +402,6 @@ private struct SettingsSheet: View {
                     TextField("Church ID", text: $viewModel.settings.churchID)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-
-                    Button("Reload Bible Versions") {
-                        Task { await viewModel.loadBibleVersions() }
-                    }
                 }
 
                 Section("Bible Versions") {
@@ -440,47 +409,36 @@ private struct SettingsSheet: View {
                         Text(viewModel.bibleVersionsError.isEmpty ? "No versions loaded yet." : viewModel.bibleVersionsError)
                             .foregroundStyle(.secondary)
                     } else {
-                        Picker("Source", selection: $viewModel.settings.sourceScriptureVersion) {
+                        Picker("Spanish", selection: $viewModel.settings.sourceScriptureVersion) {
                             ForEach(viewModel.bibleVersions) { version in
                                 Text("\(version.name) (\(version.slug))").tag(version.slug)
                             }
                         }
 
-                        Picker("Display", selection: $viewModel.settings.displayScriptureVersion) {
+                        Picker("English", selection: $viewModel.settings.displayScriptureVersion) {
                             ForEach(viewModel.bibleVersions) { version in
                                 Text("\(version.name) (\(version.slug))").tag(version.slug)
                             }
                         }
                     }
+
+                    Button("Reload Bible Versions") {
+                        Task { await viewModel.loadBibleVersions() }
+                    }
                 }
 
-                Section("Capture Mode") {
+                Section("Audio Mode") {
                     Picker("Mode", selection: $viewModel.settings.captureMode) {
                         ForEach(CaptureMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
                     }
-                    Text(viewModel.settings.captureMode.sessionModeDescription)
+                    Text("Live capture uses Apple Voice Passthrough. Advanced diagnostics stay in the waveform panel.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    Text("Live capture uses Apple Voice Passthrough. Alternate strategies are reserved for remote diagnostics.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Diagnostics") {
-                    LabeledContent("Permission", value: viewModel.diagnostics.microphonePermissionGranted ? "Granted" : "Not granted")
-                    LabeledContent("Input Route", value: viewModel.diagnostics.routeName)
-                    LabeledContent("Capture Path", value: viewModel.diagnostics.capturePath)
-                    LabeledContent("Input Channels", value: "\(viewModel.diagnostics.inputChannels)")
-                    LabeledContent("Input Format", value: viewModel.diagnostics.inputFormatDescription)
-                    LabeledContent("Voice Processing", value: viewModel.diagnostics.voiceProcessingEnabled ? "Enabled" : "Off")
-                    LabeledContent("Voice Processing AGC", value: viewModel.diagnostics.voiceProcessingAGCEnabled ? "On" : "Off")
-                    LabeledContent("Echo-Cancelled Input", value: viewModel.diagnostics.echoCancelledInputEnabled ? "Enabled" : "Off")
-                    LabeledContent("Speech Activity", value: viewModel.diagnostics.speechDetected ? "Detected" : "Idle")
                 }
             }
-            .navigationTitle("Settings")
+            .navigationTitle("Advanced")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
@@ -490,72 +448,347 @@ private struct SettingsSheet: View {
     }
 }
 
-private struct VerseSheet: View {
-    let segment: TranslationSegment
+private struct DiagnosticsSheet: View {
+    @Bindable var viewModel: TranslationTestViewModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
-                Section("English") {
-                    Text(segment.english)
+                Section("Status") {
+                    LabeledContent("Stream", value: viewModel.streamStatus.rawValue.capitalized)
+                    LabeledContent("Display Feed", value: viewModel.displayConnected ? "Connected" : "Disconnected")
+                    LabeledContent("Input Route", value: viewModel.diagnostics.routeName)
+                    LabeledContent("Capture Path", value: viewModel.diagnostics.capturePath)
                 }
-                Section("Spanish") {
-                    Text(segment.spanish)
+
+                Section("Audio") {
+                    LabeledContent("Input Sample Rate", value: "\(Int(viewModel.diagnostics.inputSampleRate)) Hz")
+                    LabeledContent("Emitted Sample Rate", value: "\(Int(viewModel.diagnostics.emittedSampleRate)) Hz")
+                    LabeledContent("Chunk Size", value: "\(viewModel.diagnostics.chunkSampleCount) samples")
+                    LabeledContent("Input Format", value: viewModel.diagnostics.inputFormatDescription)
+                    LabeledContent("Input Level", value: "\(Int((viewModel.diagnostics.rmsLevel * 100).rounded()))%")
+                    LabeledContent("Speech Activity", value: viewModel.diagnostics.speechDetected ? "Detected" : "Idle")
+                    LabeledContent("Voice Processing", value: viewModel.diagnostics.voiceProcessingEnabled ? "Enabled" : "Off")
+                    LabeledContent("Echo-Cancelled Input", value: viewModel.diagnostics.echoCancelledInputEnabled ? "Enabled" : "Off")
                 }
-                if let verse = segment.verseDetected {
-                    Section("Detected Verse") {
-                        Text(verse.reference).font(.headline)
-                        if let explanation = verse.explanation {
-                            Text(explanation)
-                        }
-                        if let sourcePassage = verse.sourcePassage {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Source: \(sourcePassage.version.name)")
-                                    .font(.subheadline.weight(.semibold))
-                                Text(sourcePassage.verses.map(\.text).joined(separator: " "))
-                            }
-                        }
-                        if let displayPassage = verse.displayPassage {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Display: \(displayPassage.version.name)")
-                                    .font(.subheadline.weight(.semibold))
-                                Text(displayPassage.verses.map(\.text).joined(separator: " "))
-                            }
-                        }
-                    }
-                }
-                if !segment.verseSuggestions.isEmpty {
-                    Section("Suggestions") {
-                        ForEach(segment.verseSuggestions, id: \.reference) { suggestion in
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(suggestion.reference).font(.headline)
-                                Text(suggestion.explanation ?? suggestion.relevanceNote)
-                                if let sourcePassage = suggestion.sourcePassage {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("Source: \(sourcePassage.version.name)")
-                                            .font(.subheadline.weight(.semibold))
-                                        Text(sourcePassage.verses.map(\.text).joined(separator: " "))
-                                    }
-                                }
-                                if let displayPassage = suggestion.displayPassage {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("Display: \(displayPassage.version.name)")
-                                            .font(.subheadline.weight(.semibold))
-                                        Text(displayPassage.verses.map(\.text).joined(separator: " "))
-                                    }
-                                }
-                            }
-                        }
-                    }
+
+                Section("Transport") {
+                    LabeledContent("Chunks Emitted", value: "\(viewModel.interpreterChunksObserved)")
+                    LabeledContent("Chunks Sent", value: "\(viewModel.interpreterChunksSent)")
+                    LabeledContent("Send Failures", value: "\(viewModel.interpreterSendFailures)")
                 }
             }
-            .navigationTitle("Scripture")
+            .navigationTitle("Diagnostics")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }
             }
         }
+    }
+}
+
+private struct VerseSheetItem: Identifiable, Equatable {
+    enum Kind {
+        case detected
+        case suggested
+    }
+
+    let kind: Kind
+    let reference: String
+    let explanation: String
+    let sourcePassage: ScripturePassage?
+    let displayPassage: ScripturePassage?
+
+    var id: String { "\(reference)-\(badgeText)" }
+
+    var badgeText: String {
+        switch kind {
+        case .detected:
+            return "Detected"
+        case .suggested:
+            return "Suggested"
+        }
+    }
+}
+
+private struct ChapterReaderRequest: Identifiable, Equatable {
+    let versionSlug: String
+    let versionName: String
+    let book: String
+    let chapter: Int
+
+    var id: String { "\(versionSlug)-\(book)-\(chapter)" }
+}
+
+private struct VerseSheet: View {
+    let segment: TranslationSegment
+    let baseURL: URL?
+    let churchID: String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedItemID: String
+    @State private var chapterRequest: ChapterReaderRequest?
+
+    init(segment: TranslationSegment, baseURL: URL?, churchID: String) {
+        self.segment = segment
+        self.baseURL = baseURL
+        self.churchID = churchID
+
+        let defaultID: String
+        if let verse = segment.verseDetected {
+            defaultID = "\(verse.reference)-Detected"
+        } else if let suggestion = segment.verseSuggestions.first {
+            defaultID = "\(suggestion.reference)-Suggested"
+        } else {
+            defaultID = "empty"
+        }
+        _selectedItemID = State(initialValue: defaultID)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if items.count > 1 {
+                        selectionChips
+                    }
+
+                    if let selectedItem {
+                        heroCard(for: selectedItem)
+
+                        if let sourcePassage = selectedItem.sourcePassage {
+                            passageCard(
+                                title: sourcePassage.version.name,
+                                languageLabel: "Spanish",
+                                passage: sourcePassage,
+                                accent: .orange
+                            )
+                        }
+
+                        if let displayPassage = selectedItem.displayPassage {
+                            passageCard(
+                                title: displayPassage.version.name,
+                                languageLabel: "English",
+                                passage: displayPassage,
+                                accent: .blue
+                            )
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("Scripture")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .sheet(item: $chapterRequest) { request in
+                ChapterReaderSheet(request: request, baseURL: baseURL, churchID: churchID)
+            }
+        }
+    }
+
+    private var items: [VerseSheetItem] {
+        var values: [VerseSheetItem] = []
+        if let verse = segment.verseDetected {
+            values.append(
+                VerseSheetItem(
+                    kind: .detected,
+                    reference: verse.reference,
+                    explanation: verse.explanation ?? "This appears to be the strongest scripture match for the current caption.",
+                    sourcePassage: verse.sourcePassage,
+                    displayPassage: verse.displayPassage
+                )
+            )
+        }
+        values.append(contentsOf: segment.verseSuggestions.map {
+            VerseSheetItem(
+                kind: .suggested,
+                reference: $0.reference,
+                explanation: $0.explanation ?? $0.relevanceNote,
+                sourcePassage: $0.sourcePassage,
+                displayPassage: $0.displayPassage
+            )
+        })
+        return values
+    }
+
+    private var selectedItem: VerseSheetItem? {
+        items.first(where: { $0.id == selectedItemID }) ?? items.first
+    }
+
+    private var selectionChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(items) { item in
+                    Button {
+                        selectedItemID = item.id
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.reference)
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            Text(item.badgeText.uppercased())
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(selectedItemID == item.id ? Color.accentColor.opacity(0.18) : Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func heroCard(for item: VerseSheetItem) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(item.badgeText.uppercased())
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+            Text(item.reference)
+                .font(.system(.title2, design: .rounded, weight: .bold))
+            Text(item.explanation)
+                .font(.system(.body, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func passageCard(title: String, languageLabel: String, passage: ScripturePassage, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(languageLabel.uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(accent)
+                    Text(title)
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                    Text(passage.reference)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Read \(passage.book) \(passage.chapter)") {
+                    chapterRequest = ChapterReaderRequest(
+                        versionSlug: passage.version.slug,
+                        versionName: passage.version.name,
+                        book: passage.book,
+                        chapter: passage.chapter
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(accent)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(passage.verses, id: \.reference) { verse in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text("\(verse.verse)")
+                            .font(.system(.headline, design: .rounded, weight: .bold))
+                            .foregroundStyle(accent)
+                            .frame(width: 28, alignment: .leading)
+                        Text(verse.text)
+                            .font(.system(.body, design: .rounded))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+}
+
+private struct ChapterReaderSheet: View {
+    let request: ChapterReaderRequest
+    let baseURL: URL?
+    let churchID: String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var chapter: ScriptureChapter?
+    @State private var errorMessage = ""
+    @State private var isLoading = true
+
+    private let service = BibleVersionService()
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    ProgressView("Loading \(request.book) \(request.chapter)…")
+                } else if let chapter {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(chapter.reference)
+                                    .font(.system(.title2, design: .rounded, weight: .bold))
+                                Text(chapter.version.name)
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            ForEach(chapter.verses, id: \.reference) { verse in
+                                HStack(alignment: .top, spacing: 12) {
+                                    Text("\(verse.verse)")
+                                        .font(.system(.headline, design: .rounded, weight: .bold))
+                                        .foregroundStyle(Color.accentColor)
+                                        .frame(width: 30, alignment: .leading)
+                                    Text(verse.text)
+                                        .font(.system(.body, design: .rounded))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                        .padding(16)
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "Chapter unavailable",
+                        systemImage: "book.closed",
+                        description: Text(errorMessage.isEmpty ? "We couldn't load this chapter right now." : errorMessage)
+                    )
+                }
+            }
+            .task {
+                await loadChapter()
+            }
+            .navigationTitle("Reader")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func loadChapter() async {
+        guard let baseURL else {
+            errorMessage = "Missing backend base URL."
+            isLoading = false
+            return
+        }
+
+        do {
+            chapter = try await service.fetchChapter(
+                baseURL: baseURL,
+                churchID: churchID,
+                versionSlug: request.versionSlug,
+                book: request.book,
+                chapter: request.chapter
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
     }
 }

@@ -106,6 +106,15 @@ struct ScripturePassage: Codable, Hashable {
     }
 }
 
+struct ScriptureChapter: Codable, Hashable {
+    let version: ScripturePassageVersion
+    let book: String
+    let chapter: Int
+    let verses: [ScripturePassageVerse]
+
+    var reference: String { "\(book) \(chapter)" }
+}
+
 struct VerseDetection: Codable, Hashable {
     let book: String
     let chapter: Int
