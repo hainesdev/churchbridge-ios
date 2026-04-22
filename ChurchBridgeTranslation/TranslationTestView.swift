@@ -672,8 +672,8 @@ private struct VerseSheet: View {
     @State private var selectedItemID: String
     @State private var chapterRequest: ChapterReaderRequest?
 
-    private let cardInk = Color(red: 0.11, green: 0.11, blue: 0.13)
-    private let cardSecondaryInk = Color(red: 0.36, green: 0.37, blue: 0.41)
+    private let cardInk = Color.black.opacity(0.88)
+    private let cardSecondaryInk = Color.black.opacity(0.62)
     private let chipInk = Color(red: 0.13, green: 0.13, blue: 0.15)
 
     init(segment: TranslationSegment, baseURL: URL?, churchID: String, settings: SettingsStore) {
@@ -795,10 +795,10 @@ private struct VerseSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(item.reference)
                 .font(.system(.title2, design: .rounded, weight: .bold))
-                .foregroundStyle(cardInk)
+                .foregroundColor(cardInk)
             Text(item.explanation)
                 .font(.system(.body, design: .rounded))
-                .foregroundStyle(cardSecondaryInk)
+                .foregroundColor(cardSecondaryInk)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -814,10 +814,10 @@ private struct VerseSheet: View {
                         .foregroundStyle(accent)
                     Text(title)
                         .font(.system(.headline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(cardInk)
+                        .foregroundColor(cardInk)
                     Text(passage.reference)
                         .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(cardSecondaryInk)
+                        .foregroundColor(cardSecondaryInk)
                 }
 
                 Spacer()
@@ -838,7 +838,7 @@ private struct VerseSheet: View {
 
             Text("Continue reading from \(passage.reference) in \(languageLabel).")
                 .font(.system(.footnote, design: .rounded))
-                .foregroundStyle(cardSecondaryInk)
+                .foregroundColor(cardSecondaryInk)
 
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(passage.verses, id: \.reference) { verse in
@@ -849,7 +849,7 @@ private struct VerseSheet: View {
                             .frame(width: 28, alignment: .leading)
                         Text(verse.text)
                             .font(.system(.body, design: .rounded))
-                            .foregroundStyle(cardInk)
+                            .foregroundColor(cardInk)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
@@ -864,10 +864,10 @@ private struct VerseSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Passage text is still loading")
                 .font(.system(.headline, design: .rounded, weight: .semibold))
-                .foregroundStyle(cardInk)
+                .foregroundColor(cardInk)
             Text("The reference and explanation are available, but the full passage text has not arrived yet. Try reopening this verse in a moment.")
                 .font(.system(.body, design: .rounded))
-                .foregroundStyle(cardSecondaryInk)
+                .foregroundColor(cardSecondaryInk)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -900,9 +900,10 @@ private struct ChapterReaderSheet: View {
     @State private var isLoadingPrevious = false
     @State private var isLoadingNext = false
     @State private var showTableOfContents = false
+    @State private var shouldPersistLocation = true
 
     private let service = BibleVersionService()
-    private let maxLoadedChapters = 5
+    private let maxLoadedChapters = 3
 
     init(request: ChapterReaderRequest, baseURL: URL?, churchID: String, settings: SettingsStore, showContentsOnAppear: Bool = false) {
         self.request = request
@@ -911,6 +912,7 @@ private struct ChapterReaderSheet: View {
         self.settings = settings
         self.showContentsOnAppear = showContentsOnAppear
         _currentRequest = State(initialValue: request)
+        _shouldPersistLocation = State(initialValue: !showContentsOnAppear)
     }
 
     var body: some View {
@@ -1001,7 +1003,7 @@ private struct ChapterReaderSheet: View {
                 chapter: currentRequest.chapter
             )
             loadedChapters = [LoadedBibleChapter(request: currentRequest, chapter: chapter)]
-            if !showContentsOnAppear {
+            if shouldPersistLocation {
                 persistLocation(for: currentRequest)
             }
             if showContentsOnAppear {
@@ -1052,10 +1054,10 @@ private struct ChapterReaderSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(loaded.chapter.reference)
                     .font(.system(.title2, design: .rounded, weight: .bold))
-                    .foregroundStyle(.primary)
+                    .foregroundColor(.black.opacity(0.88))
                 Text(loaded.chapter.version.name)
                     .font(.system(.subheadline, design: .rounded))
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(.black.opacity(0.62))
                 if loaded.request.book == currentRequest.book, loaded.request.chapter == currentRequest.chapter, let highlightVerse = loaded.request.highlightVerse {
                     Text("Opened at verse \(highlightVerse)")
                         .font(.system(.footnote, design: .rounded, weight: .semibold))
@@ -1071,7 +1073,7 @@ private struct ChapterReaderSheet: View {
                         .frame(width: 30, alignment: .leading)
                     Text(verse.text)
                         .font(.system(.body, design: .rounded))
-                        .foregroundStyle(.primary)
+                        .foregroundColor(.black.opacity(0.88))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 12)
@@ -1090,7 +1092,9 @@ private struct ChapterReaderSheet: View {
             chapter: loaded.request.chapter,
             highlightVerse: loaded.request.highlightVerse
         )
-        persistLocation(for: currentRequest)
+        if shouldPersistLocation {
+            persistLocation(for: currentRequest)
+        }
 
         if loaded.id == loadedChapters.first?.id, let previousRequest, !isLoadingPrevious {
             await prependChapter(previousRequest)
@@ -1146,6 +1150,7 @@ private struct ChapterReaderSheet: View {
         showTableOfContents = false
         isLoading = true
         errorMessage = ""
+        shouldPersistLocation = true
         currentRequest = request
         do {
             let chapter = try await service.fetchChapter(
@@ -1232,34 +1237,44 @@ private struct BibleContentsSheet: View {
     let onSelect: (ChapterReaderRequest) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedBookName: String
-
-    init(books: [BibleBook], currentRequest: ChapterReaderRequest, onSelect: @escaping (ChapterReaderRequest) -> Void) {
-        self.books = books
-        self.currentRequest = currentRequest
-        self.onSelect = onSelect
-        _selectedBookName = State(initialValue: currentRequest.book)
-    }
+    @State private var showBookPicker = false
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                List(books) { book in
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(currentRequest.book)
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .foregroundColor(.black.opacity(0.88))
+                    Text("\(selectedBook?.chapterCount ?? 0) chapters")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundColor(.black.opacity(0.62))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+                HStack {
                     Button {
-                        selectedBookName = book.bookName
+                        dismiss()
                     } label: {
-                        HStack {
-                            Text(book.bookName)
-                            Spacer()
-                            if book.bookName == currentRequest.book {
-                                Text("\(currentRequest.chapter)")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                        Label("Done", systemImage: "xmark")
+                            .labelStyle(.titleAndIcon)
                     }
                     .buttonStyle(.plain)
+
+                    Spacer()
+
+                    Button {
+                        showBookPicker = true
+                    } label: {
+                        Label("Change Book", systemImage: "books.vertical")
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .frame(maxHeight: 280)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
 
                 Divider()
 
@@ -1294,16 +1309,26 @@ private struct BibleContentsSheet: View {
                 }
             }
             .navigationTitle("Contents")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+            .sheet(isPresented: $showBookPicker) {
+                BibleBookPickerSheet(books: books, currentRequest: currentRequest) { book in
+                    showBookPicker = false
+                    onSelect(
+                        ChapterReaderRequest(
+                            versionSlug: currentRequest.versionSlug,
+                            versionName: currentRequest.versionName,
+                            book: book.bookName,
+                            chapter: 1,
+                            highlightVerse: nil
+                        )
+                    )
+                    dismiss()
                 }
             }
         }
     }
 
     private var selectedBook: BibleBook? {
-        books.first(where: { $0.bookName == selectedBookName }) ?? books.first
+        books.first(where: { $0.bookName == currentRequest.book }) ?? books.first
     }
 
     private func chapterFill(for book: BibleBook, chapter: Int) -> Color {
@@ -1312,5 +1337,41 @@ private struct BibleContentsSheet: View {
 
     private func chapterForeground(for book: BibleBook, chapter: Int) -> Color {
         book.bookName == currentRequest.book && chapter == currentRequest.chapter ? .accentColor : Color(uiColor: .label)
+    }
+}
+
+private struct BibleBookPickerSheet: View {
+    let books: [BibleBook]
+    let currentRequest: ChapterReaderRequest
+    let onSelect: (BibleBook) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(books) { book in
+                Button {
+                    onSelect(book)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(book.bookName)
+                            .foregroundColor(.primary)
+                        Spacer()
+                        if book.bookName == currentRequest.book {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.accentColor)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("Books")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
