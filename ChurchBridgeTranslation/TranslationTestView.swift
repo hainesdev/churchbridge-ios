@@ -499,8 +499,19 @@ private struct VerseSheet: View {
                         if let explanation = verse.explanation {
                             Text(explanation)
                         }
+                        if let sourcePassage = verse.sourcePassage {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Source: \(sourcePassage.version.name)")
+                                    .font(.subheadline.weight(.semibold))
+                                Text(sourcePassage.verses.map(\.text).joined(separator: " "))
+                            }
+                        }
                         if let displayPassage = verse.displayPassage {
-                            Text(displayPassage.verses.map(\.text).joined(separator: " "))
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Display: \(displayPassage.version.name)")
+                                    .font(.subheadline.weight(.semibold))
+                                Text(displayPassage.verses.map(\.text).joined(separator: " "))
+                            }
                         }
                     }
                 }
@@ -510,6 +521,20 @@ private struct VerseSheet: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(suggestion.reference).font(.headline)
                                 Text(suggestion.explanation ?? suggestion.relevanceNote)
+                                if let sourcePassage = suggestion.sourcePassage {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Source: \(sourcePassage.version.name)")
+                                            .font(.subheadline.weight(.semibold))
+                                        Text(sourcePassage.verses.map(\.text).joined(separator: " "))
+                                    }
+                                }
+                                if let displayPassage = suggestion.displayPassage {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Display: \(displayPassage.version.name)")
+                                            .font(.subheadline.weight(.semibold))
+                                        Text(displayPassage.verses.map(\.text).joined(separator: " "))
+                                    }
+                                }
                             }
                         }
                     }

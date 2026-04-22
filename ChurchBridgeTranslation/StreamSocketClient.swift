@@ -9,6 +9,12 @@ actor StreamSocketClient {
         let displayScriptureVersion: String
     }
 
+    struct AudioSendResult: Sendable {
+        let success: Bool
+        let encodedBytes: Int
+        let decodedBytes: Int
+    }
+
     private var task: URLSessionWebSocketTask?
     private var state: StreamStatus = .idle
     private var retryTask: Task<Void, Never>?
@@ -45,12 +51,18 @@ actor StreamSocketClient {
         transition(to: .idle)
     }
 
-    func sendAudio(base64Float32: String) async {
-        guard let task else { return }
+    func sendAudio(base64Float32: String) async -> AudioSendResult {
+        let decodedBytes = Data(base64Encoded: base64Float32)?.count ?? 0
+        let encodedBytes = base64Float32.utf8.count
+        guard let task else {
+            return AudioSendResult(success: false, encodedBytes: encodedBytes, decodedBytes: decodedBytes)
+        }
         do {
             try await sendEncodable(StreamAudioPayload(audio: base64Float32), over: task)
+            return AudioSendResult(success: true, encodedBytes: encodedBytes, decodedBytes: decodedBytes)
         } catch {
             messageHandler?("Audio send failed: \(error.localizedDescription)")
+            return AudioSendResult(success: false, encodedBytes: encodedBytes, decodedBytes: decodedBytes)
         }
     }
 
