@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 71;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -57,8 +57,6 @@
 		};
 		A00000000000000000000302 /* ChurchBridgeTranslation */ = {
 			isa = PBXGroup;
-			path = ChurchBridgeTranslation;
-			sourceTree = "<group>";
 			children = (
 				A00000000000000000000001 /* ChurchBridgeTranslationApp.swift */,
 				A00000000000000000000002 /* TranslationTestView.swift */,
@@ -73,6 +71,8 @@
 				A0000000000000000000000B /* Assets.xcassets */,
 				A0000000000000000000000C /* Info.plist */,
 			);
+			path = ChurchBridgeTranslation;
+			sourceTree = "<group>";
 		};
 		A00000000000000000000303 /* Products */ = {
 			isa = PBXGroup;

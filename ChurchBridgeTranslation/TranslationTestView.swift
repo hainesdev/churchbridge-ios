@@ -901,9 +901,13 @@ private struct ChapterReaderSheet: View {
     @State private var isLoadingNext = false
     @State private var showTableOfContents = false
     @State private var shouldPersistLocation = true
+    /// Off until the opened chapter is on-screen, so a single section does not both prepend and append on appear.
+    @State private var allowAdjacentChapterLoading = false
 
     private let service = BibleVersionService()
     private let maxLoadedChapters = 3
+    private let cardInk = Color.black.opacity(0.88)
+    private let cardSecondaryInk = Color.black.opacity(0.62)
 
     init(request: ChapterReaderRequest, baseURL: URL?, churchID: String, settings: SettingsStore, showContentsOnAppear: Bool = false) {
         self.request = request
@@ -923,7 +927,7 @@ private struct ChapterReaderSheet: View {
                 } else if !loadedChapters.isEmpty {
                     ScrollViewReader { proxy in
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 18) {
+                            LazyVStack(alignment: .leading, spacing: 18) {
                                 if isLoadingPrevious {
                                     ProgressView()
                                         .frame(maxWidth: .infinity)
@@ -958,6 +962,7 @@ private struct ChapterReaderSheet: View {
                     )
                 }
             }
+            .background(Color(uiColor: .systemGroupedBackground))
             .task {
                 await loadChapter()
             }
@@ -989,19 +994,22 @@ private struct ChapterReaderSheet: View {
             return
         }
 
+        allowAdjacentChapterLoading = false
         do {
-            books = try await service.fetchBooks(
+            async let booksResponse = service.fetchBooks(
                 baseURL: baseURL,
                 churchID: churchID,
                 versionSlug: currentRequest.versionSlug
             )
-            let chapter = try await service.fetchChapter(
+            async let chapterResponse = service.fetchChapter(
                 baseURL: baseURL,
                 churchID: churchID,
                 versionSlug: currentRequest.versionSlug,
                 book: currentRequest.book,
                 chapter: currentRequest.chapter
             )
+            let (fetchedBooks, chapter) = try await (booksResponse, chapterResponse)
+            books = fetchedBooks
             loadedChapters = [LoadedBibleChapter(request: currentRequest, chapter: chapter)]
             if shouldPersistLocation {
                 persistLocation(for: currentRequest)
@@ -1013,6 +1021,9 @@ private struct ChapterReaderSheet: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+        if errorMessage.isEmpty, !loadedChapters.isEmpty {
+            Task { await scheduleAdjacentPrefetchAfterInitialLayout() }
+        }
     }
 
     private var currentBookIndex: Int? {
@@ -1040,24 +1051,48 @@ private struct ChapterReaderSheet: View {
         return ChapterReaderRequest(versionSlug: currentRequest.versionSlug, versionName: currentRequest.versionName, book: nextBook.bookName, chapter: 1, highlightVerse: nil)
     }
 
+    private func verseRowScrollID(book: String, chapter: Int, verse: Int) -> String {
+        "\(book) \(chapter):\(verse)"
+    }
+
+    private func scheduleAdjacentPrefetchAfterInitialLayout() async {
+        try? await Task.sleep(for: .milliseconds(280))
+        allowAdjacentChapterLoading = true
+        await prefetchInitialNeighbors()
+    }
+
+    private func prefetchInitialNeighbors() async {
+        guard loadedChapters.count == 1,
+              loadedChapters[0].request.book == currentRequest.book,
+              loadedChapters[0].request.chapter == currentRequest.chapter
+        else { return }
+        if let p = previousRequest {
+            await prependChapter(p)
+        }
+        if let n = nextRequest {
+            await appendChapter(n)
+        }
+    }
+
     private func scrollToHighlight(using proxy: ScrollViewProxy) {
         guard let highlightVerse = currentRequest.highlightVerse else { return }
+        let id = verseRowScrollID(book: currentRequest.book, chapter: currentRequest.chapter, verse: highlightVerse)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo("\(currentRequest.book) \(currentRequest.chapter):\(highlightVerse)", anchor: .center)
+                proxy.scrollTo(id, anchor: .center)
             }
         }
     }
 
     private func chapterSection(for loaded: LoadedBibleChapter) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(loaded.chapter.reference)
                     .font(.system(.title2, design: .rounded, weight: .bold))
-                    .foregroundColor(.black.opacity(0.88))
+                    .foregroundColor(cardInk)
                 Text(loaded.chapter.version.name)
                     .font(.system(.subheadline, design: .rounded))
-                    .foregroundColor(.black.opacity(0.62))
+                    .foregroundColor(cardSecondaryInk)
                 if loaded.request.book == currentRequest.book, loaded.request.chapter == currentRequest.chapter, let highlightVerse = loaded.request.highlightVerse {
                     Text("Opened at verse \(highlightVerse)")
                         .font(.system(.footnote, design: .rounded, weight: .semibold))
@@ -1065,23 +1100,39 @@ private struct ChapterReaderSheet: View {
                 }
             }
 
-            ForEach(loaded.chapter.verses, id: \.reference) { verse in
-                HStack(alignment: .top, spacing: 12) {
-                    Text("\(verse.verse)")
-                        .font(.system(.headline, design: .rounded, weight: .bold))
-                        .foregroundStyle(verse.verse == loaded.request.highlightVerse && loaded.request.book == currentRequest.book && loaded.request.chapter == currentRequest.chapter ? Color.accentColor : .secondary)
-                        .frame(width: 30, alignment: .leading)
-                    Text(verse.text)
-                        .font(.system(.body, design: .rounded))
-                        .foregroundColor(.black.opacity(0.88))
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(loaded.chapter.verses, id: \.verse) { verse in
+                    verseRow(loaded: loaded, verse: verse)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(verse.verse == loaded.request.highlightVerse && loaded.request.book == currentRequest.book && loaded.request.chapter == currentRequest.chapter ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .id(verse.reference)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func verseRow(loaded: LoadedBibleChapter, verse: ScripturePassageVerse) -> some View {
+        let isHighlighted = (loaded.request.highlightVerse.map { $0 == verse.verse } ?? false)
+            && loaded.request.book == currentRequest.book
+            && loaded.request.chapter == currentRequest.chapter
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(verse.verse)")
+                .font(.system(.headline, design: .rounded, weight: .bold))
+                .foregroundStyle(isHighlighted ? Color.accentColor : cardSecondaryInk)
+                .frame(width: 30, alignment: .leading)
+            Text(verse.text)
+                .font(.system(.body, design: .rounded))
+                .foregroundColor(cardInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            isHighlighted ? Color.accentColor.opacity(0.10) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .id(verseRowScrollID(book: loaded.chapter.book, chapter: loaded.chapter.chapter, verse: verse.verse))
     }
 
     private func handleChapterAppearance(_ loaded: LoadedBibleChapter) async {
@@ -1095,6 +1146,8 @@ private struct ChapterReaderSheet: View {
         if shouldPersistLocation {
             persistLocation(for: currentRequest)
         }
+
+        guard allowAdjacentChapterLoading else { return }
 
         if loaded.id == loadedChapters.first?.id, let previousRequest, !isLoadingPrevious {
             await prependChapter(previousRequest)
@@ -1119,7 +1172,7 @@ private struct ChapterReaderSheet: View {
                 chapter: request.chapter
             )
             loadedChapters.insert(LoadedBibleChapter(request: request, chapter: chapter), at: 0)
-            trimLoadedChapters(keeping: request)
+            trimLoadedChapters(keeping: currentRequest)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1139,7 +1192,7 @@ private struct ChapterReaderSheet: View {
                 chapter: request.chapter
             )
             loadedChapters.append(LoadedBibleChapter(request: request, chapter: chapter))
-            trimLoadedChapters(keeping: request)
+            trimLoadedChapters(keeping: currentRequest)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1151,6 +1204,7 @@ private struct ChapterReaderSheet: View {
         isLoading = true
         errorMessage = ""
         shouldPersistLocation = true
+        allowAdjacentChapterLoading = false
         currentRequest = request
         do {
             let chapter = try await service.fetchChapter(
@@ -1166,6 +1220,9 @@ private struct ChapterReaderSheet: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+        if errorMessage.isEmpty, !loadedChapters.isEmpty {
+            Task { await scheduleAdjacentPrefetchAfterInitialLayout() }
+        }
     }
 
     private func persistLocation(for request: ChapterReaderRequest) {

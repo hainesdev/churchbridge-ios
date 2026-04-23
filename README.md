@@ -14,3 +14,4 @@ Open `ChurchBridgeTranslation.xcodeproj` in Xcode on the macOS VM at `~/MacVmSha
 Development notes:
 
 - See [IOS_AUDIO_NOTES.md](C:/Users/Dan/Desktop/Projects/macOS-ios-dev/shared/churchbridge-ios/IOS_AUDIO_NOTES.md) for native voice-capture findings, sample-code references, redesign notes, and next steps.
+- See [IOS_DEVELOPMENT_NOTES.md](C:/Users/Dan/Desktop/Projects/macOS-ios-dev/shared/churchbridge-ios/IOS_DEVELOPMENT_NOTES.md) for VM workflow, signing, Xcode Cloud, App Store Connect, and TestFlight findings from the first deployment cycle.
