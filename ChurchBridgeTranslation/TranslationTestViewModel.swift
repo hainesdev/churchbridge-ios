@@ -2,6 +2,23 @@ import Foundation
 import Observation
 import UIKit
 
+enum UserFacingError {
+    static func userMessage(_ raw: String) -> String {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return "" }
+        if let mapped = directMappings.first(where: { t.localizedCaseInsensitiveContains($0.key) })?.value { return mapped }
+        if t.hasPrefix("Display decode failed:") { return "Couldn’t read the live text feed. Try Reconnect in the menu." }
+        if t.contains("http") && t.contains("statusCode") { return "A network request failed. Check your connection and try again." }
+        if t == NetworkError.invalidBaseURL.localizedDescription { return "Add a valid server address in Settings." }
+        if t.contains("The operation couldn’t be completed") && t.contains("NSURLError") { return "Network error. Check Wi‑Fi or cellular, then try again." }
+        return t
+    }
+
+    private static let directMappings: KeyValuePairs<String, String> = [
+        "Input is clipping": "Audio is peaking. Move a bit away from the speaker, or we’ll keep hearing distortion.",
+    ]
+}
+
 private struct InterpreterProbeSnapshot {
     let audioChunksObserved: Int
     let audioChunksSent: Int
@@ -33,6 +50,7 @@ final class TranslationTestViewModel {
     var bibleVersions: [BibleVersionOption] = []
     var bibleVersionsError = ""
     var latestError = ""
+    var userFacingLatestError: String { UserFacingError.userMessage(latestError) }
     var streamStatus: StreamStatus = .idle
     var displayConnected = false
     var diagnostics = AudioDiagnostics()

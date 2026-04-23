@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -167,6 +168,7 @@ final class DisplayFeedStore {
     }
 
     private func flashSegment(_ ts: Int) {
+        if UIAccessibility.isReduceMotionEnabled { return }
         flashClearTask?.cancel()
         snapshot.flashingID = ts
         flashClearTask = Task { @MainActor [weak self] in

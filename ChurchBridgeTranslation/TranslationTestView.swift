@@ -1,8 +1,29 @@
 import SwiftUI
 import UIKit
 
+private enum AppTheme {
+    static let gradientTop = Color(red: 0.05, green: 0.07, blue: 0.10)
+    static let gradientBottom = Color(red: 0.08, green: 0.14, blue: 0.11)
+    static let gradientGlow = Color(red: 0.20, green: 0.35, blue: 0.28).opacity(0.30)
+    static let newLineEmphasis: Color = Color(red: 0.84, green: 0.94, blue: 1.0)
+    static let errorSoft: Color = Color(red: 1.0, green: 0.72, blue: 0.72)
+    static let cardBackgroundIdle: Color = .white.opacity(0.08)
+    static let cardBorderIdle: Color = .white.opacity(0.06)
+    static let textPrimary: Color = .white
+    static let textSecondary: Double = 0.78
+    static let textTertiary: Double = 0.72
+    static let textSpanishFinal: Double = 0.58
+    static let textSpanishInterim: Double = 0.52
+    static func liveCardBackground(flashed: Bool, pending: Bool) -> Color {
+        if flashed { return .white.opacity(0.13) }
+        return .white.opacity(pending ? 0.05 : 0.09)
+    }
+}
+
 struct TranslationTestView: View {
     @Bindable var viewModel: TranslationTestViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("hasSeenMicOnboarding") private var hasSeenMicOnboarding = false
     @State private var selectedSegment: TranslationSegment?
     @State private var bibleReaderRequest: ChapterReaderRequest?
     @State private var showBibleContents = false
@@ -10,8 +31,9 @@ struct TranslationTestView: View {
     @State private var userPinnedToLive = true
     @State private var showDiagnostics = false
     @State private var showAbout = false
-    @State private var controlsVisible = true
-    @State private var chromeHideTask: Task<Void, Never>?
+    @State private var showMicOnboarding = false
+    @State private var navBarVisible = true
+    @State private var navBarHideTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -28,65 +50,11 @@ struct TranslationTestView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 18)
             }
-            .navigationTitle("Interpreter")
+            .navigationTitle("ChurchBridge")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(controlsVisible ? .visible : .hidden, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            Task {
-                                if viewModel.isRunning {
-                                    await viewModel.stop()
-                                } else {
-                                    await viewModel.start()
-                                }
-                            }
-                        } label: {
-                            Label(viewModel.isRunning ? "Stop Listening" : "Start Listening", systemImage: viewModel.isRunning ? "stop.fill" : "play.fill")
-                        }
-
-                        Button {
-                            Task { await viewModel.restartDisplayConnection() }
-                        } label: {
-                            Label("Reconnect Feed", systemImage: "arrow.clockwise")
-                        }
-
-                        Divider()
-
-                        Button {
-                            if let lastBibleRequest {
-                                bibleReaderRequest = lastBibleRequest
-                            } else {
-                                showBibleContents = true
-                            }
-                        } label: {
-                            Label(lastBibleRequest == nil ? "Browse Bible" : "Resume Bible", systemImage: "book.closed")
-                        }
-
-                        Button {
-                            showDiagnostics = true
-                        } label: {
-                            Label("Diagnostics", systemImage: "waveform.path.ecg")
-                        }
-
-                        Button {
-                            viewModel.showSettings = true
-                        } label: {
-                            Label("Advanced Settings", systemImage: "gearshape.fill")
-                        }
-
-                        Button {
-                            showAbout = true
-                        } label: {
-                            Label("About", systemImage: "info.circle")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle.fill")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
-                }
+            .toolbar(navBarVisible ? .visible : .hidden, for: .navigationBar)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                mainControlBar
             }
             .sheet(isPresented: $viewModel.showSettings) {
                 SettingsSheet(viewModel: viewModel)
@@ -99,6 +67,16 @@ struct TranslationTestView: View {
             .sheet(isPresented: $showAbout) {
                 AboutSheet()
                     .presentationDetents([.medium])
+            }
+            .sheet(isPresented: $showMicOnboarding) {
+                MicOnboardingSheet(
+                    onContinue: {
+                        hasSeenMicOnboarding = true
+                        showMicOnboarding = false
+                        Task { await viewModel.start() }
+                    }
+                )
+                .presentationDetents([.medium])
             }
             .sheet(item: $selectedSegment) { segment in
                 VerseSheet(segment: segment, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID, settings: viewModel.settings)
@@ -122,12 +100,92 @@ struct TranslationTestView: View {
             }
             .onChange(of: isLive) { _, live in
                 if live {
-                    registerInteraction()
+                    registerNavBarAutoHide()
                 } else {
-                    chromeHideTask?.cancel()
-                    controlsVisible = true
+                    navBarHideTask?.cancel()
+                    navBarVisible = true
                 }
             }
+        }
+    }
+
+    private var mainControlBar: some View {
+        HStack(spacing: 14) {
+            Button {
+                Task {
+                    if viewModel.isRunning {
+                        await viewModel.stop()
+                    } else {
+                        requestStartListening()
+                    }
+                }
+            } label: {
+                Label(
+                    viewModel.isRunning ? "Stop" : "Listen",
+                    systemImage: viewModel.isRunning ? "stop.fill" : "play.fill"
+                )
+                .font(.system(.body, design: .rounded, weight: .semibold))
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.accentColor)
+            .controlSize(.large)
+
+            Menu {
+                Button {
+                    Task { await viewModel.restartDisplayConnection() }
+                } label: {
+                    Label("Reconnect live text", systemImage: "arrow.clockwise")
+                }
+
+                Divider()
+
+                Button {
+                    if let lastBibleRequest {
+                        bibleReaderRequest = lastBibleRequest
+                    } else {
+                        showBibleContents = true
+                    }
+                } label: {
+                    Label(lastBibleRequest == nil ? "Browse Bible" : "Resume Bible", systemImage: "book.closed")
+                }
+
+                Button {
+                    showDiagnostics = true
+                } label: {
+                    Label("Diagnostics", systemImage: "waveform.path.ecg")
+                }
+
+                Button {
+                    viewModel.showSettings = true
+                } label: {
+                    Label("Settings", systemImage: "gearshape.fill")
+                }
+
+                Button {
+                    showAbout = true
+                } label: {
+                    Label("About", systemImage: "info.circle")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(.ultraThinMaterial)
+    }
+
+    private func requestStartListening() {
+        if hasSeenMicOnboarding {
+            Task { await viewModel.start() }
+        } else {
+            showMicOnboarding = true
         }
     }
 
@@ -169,14 +227,14 @@ struct TranslationTestView: View {
     private var background: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(red: 0.05, green: 0.07, blue: 0.10), Color(red: 0.08, green: 0.14, blue: 0.11)],
+                colors: [AppTheme.gradientTop, AppTheme.gradientBottom],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
 
             RadialGradient(
-                colors: [Color(red: 0.20, green: 0.35, blue: 0.28).opacity(0.30), .clear],
+                colors: [AppTheme.gradientGlow, .clear],
                 center: .topTrailing,
                 startRadius: 40,
                 endRadius: 420
@@ -187,31 +245,36 @@ struct TranslationTestView: View {
 
     private var idleCard: some View {
         Button {
-            Task { await viewModel.start() }
+            requestStartListening()
         } label: {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Hear the sermon. Feel the message.")
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Hear the sermon. Follow in English.")
                     .font(.system(.title2, design: .rounded, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppTheme.textPrimary)
 
-                Text("ChurchBridge listens to live Spanish audio and writes the English translation in real time, helping carry the emotion, emphasis, and meaning of the sermon across languages.")
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.78))
+                Text("Live Spanish audio is turned into English you can read in real time. Verse links appear when scripture comes up—tap to read or open your Bible there.")
+                    .font(.body)
+                    .fontDesign(.rounded)
+                    .foregroundStyle(.white.opacity(AppTheme.textSecondary))
 
-                Text("When the message points to scripture, ChurchBridge adds verse pills so you can open the explanation, compare the passage in both languages, and continue reading the Bible from that exact place.")
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
+                Button {
+                    showAbout = true
+                } label: {
+                    Text("Learn more")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    featureRow(icon: "circle.fill", iconColor: .orange, title: "Orange pill", detail: "The sermon is likely quoting this verse.")
-                    featureRow(icon: "circle.fill", iconColor: .blue, title: "Blue pill", detail: "A related passage may deepen the moment.")
-                    featureRow(icon: "hand.tap.fill", iconColor: Color(red: 0.70, green: 0.90, blue: 0.84), title: "Tap anywhere", detail: "Start listening and close this welcome screen.")
+                    featureRow(icon: "circle.fill", iconColor: .orange, title: "Orange", detail: "Likely quote from this verse.")
+                    featureRow(icon: "circle.fill", iconColor: .blue, title: "Blue", detail: "Related passage to explore.")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(22)
-            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 1))
+            .background(AppTheme.cardBackgroundIdle, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(AppTheme.cardBorderIdle, lineWidth: 1))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .buttonStyle(.plain)
@@ -222,45 +285,16 @@ struct TranslationTestView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if controlsVisible {
-                        liveStatusStrip
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
+                    liveStatusStrip
+                        .transition(.move(edge: .top).combined(with: .opacity))
 
                     if viewModel.displayFeed.snapshot.segments.isEmpty, activeSpanish.isEmpty, viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
                         waitingCard
                     }
 
                     ForEach(viewModel.displayFeed.snapshot.segments) { segment in
-                        Button {
-                            if segment.verseDetected != nil || !segment.verseSuggestions.isEmpty {
-                                selectedSegment = segment
-                            }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 14) {
-                                Text(segment.english)
-                                    .font(.system(size: CGFloat(viewModel.settings.translationTextSize), weight: .semibold, design: .rounded))
-                                    .foregroundStyle(segment.id == viewModel.displayFeed.snapshot.flashingID ? Color(red: 0.84, green: 0.94, blue: 1.0) : .white)
-                                    .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                                Text(segment.spanish)
-                                    .font(.system(.body, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.58))
-                                    .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                                if segment.verseDetected != nil || !segment.verseSuggestions.isEmpty {
-                                    versePillRow(for: segment)
-                                }
-                            }
-                            .padding(20)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(cardBackground(for: segment), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(segment.id == viewModel.displayFeed.snapshot.flashingID ? 0.22 : 0.06), lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .id(segment.id)
+                        translationSegmentView(segment: segment)
+                            .id(segment.id)
                     }
 
                     if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty || !activeSpanish.isEmpty {
@@ -273,11 +307,11 @@ struct TranslationTestView: View {
             }
             .scrollIndicators(.hidden)
             .overlay(alignment: .bottomTrailing) {
-                if !userPinnedToLive && controlsVisible {
+                if !userPinnedToLive {
                     Button {
                         userPinnedToLive = true
                         scrollToLiveRequested += 1
-                        registerInteraction()
+                        registerNavBarAutoHide()
                     } label: {
                         Label("Live", systemImage: "arrow.down.to.line")
                             .font(.system(.caption, design: .rounded, weight: .semibold))
@@ -293,22 +327,81 @@ struct TranslationTestView: View {
             }
             .onChange(of: viewModel.displayFeed.snapshot.lastVisibleSegmentID) { _, _ in
                 guard userPinnedToLive else { return }
-                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("live-bottom", anchor: .bottom) }
+                scrollLiveToBottom(using: proxy)
             }
             .onChange(of: scrollToLiveRequested) { _, _ in
-                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("live-bottom", anchor: .bottom) }
+                scrollLiveToBottom(using: proxy)
             }
             .simultaneousGesture(
                 DragGesture().onChanged { _ in
                     userPinnedToLive = false
-                    registerInteraction()
+                    registerNavBarAutoHide()
                 }
             )
             .simultaneousGesture(
                 TapGesture().onEnded {
-                    registerInteraction()
+                    registerNavBarAutoHide()
                 }
             )
+        }
+    }
+
+    @ViewBuilder
+    private func translationSegmentView(segment: TranslationSegment) -> some View {
+        let hasVerses = segment.verseDetected != nil || !segment.verseSuggestions.isEmpty
+        let isFlashed = !reduceMotion && segment.id == viewModel.displayFeed.snapshot.flashingID
+        let englishColor: Color = {
+            if reduceMotion { return .white }
+            return isFlashed ? AppTheme.newLineEmphasis : .white
+        }()
+        let borderOpacity: Double = isFlashed ? 0.22 : 0.06
+
+        let content = VStack(alignment: .leading, spacing: 14) {
+            Text(segment.english)
+                .font(translationTitleFont)
+                .foregroundStyle(englishColor)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(segment.spanish)
+                .font(.system(.body, design: .rounded))
+                .foregroundStyle(.white.opacity(AppTheme.textSpanishFinal))
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if hasVerses {
+                versePillRow(for: segment)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.liveCardBackground(flashed: isFlashed, pending: segment.pendingCompletion), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(borderOpacity), lineWidth: 1))
+
+        if hasVerses {
+            Button {
+                selectedSegment = segment
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
+        } else {
+            content
+        }
+    }
+
+    private var translationTitleFont: Font {
+        let base = CGFloat(viewModel.settings.translationTextSize)
+        let scale = UIFont.preferredFont(forTextStyle: .body).pointSize / 17.0
+        let size = min(40, max(20, base * min(scale, 1.35)))
+        return .system(size: size, weight: .semibold, design: .rounded)
+    }
+
+    private func scrollLiveToBottom(using proxy: ScrollViewProxy) {
+        if reduceMotion {
+            proxy.scrollTo("live-bottom", anchor: .bottom)
+        } else {
+            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("live-bottom", anchor: .bottom) }
         }
     }
 
@@ -316,10 +409,10 @@ struct TranslationTestView: View {
         HStack(spacing: 8) {
             statusPill
             metricChip(title: "Feed", value: viewModel.displayConnected ? "Connected" : "Reconnecting", color: viewModel.displayConnected ? .green : .orange)
-            if !viewModel.latestError.isEmpty {
-                Text(viewModel.latestError)
+            if !viewModel.userFacingLatestError.isEmpty {
+                Text(viewModel.userFacingLatestError)
                     .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(Color(red: 1.0, green: 0.72, blue: 0.72))
+                    .foregroundStyle(AppTheme.errorSoft)
                     .lineLimit(2)
             } else if viewModel.diagnostics.clipping {
                 metricChip(title: "Input", value: "Clipping", color: .red)
@@ -334,7 +427,7 @@ struct TranslationTestView: View {
                 .foregroundStyle(.white)
             Text(waitingHint)
                 .font(.system(.callout, design: .rounded))
-                .foregroundStyle(.white.opacity(0.72))
+                .foregroundStyle(.white.opacity(AppTheme.textTertiary))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -345,13 +438,13 @@ struct TranslationTestView: View {
         VStack(alignment: .leading, spacing: 10) {
             if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
                 Text("\(viewModel.displayFeed.snapshot.partialEnglish)\u{258C}")
-                    .font(.system(size: CGFloat(viewModel.settings.translationTextSize), weight: .semibold, design: .rounded))
+                    .font(translationTitleFont)
                     .foregroundStyle(.white.opacity(0.78))
             }
             if !activeSpanish.isEmpty {
                 Text(activeSpanish)
                     .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.46))
+                    .foregroundStyle(.white.opacity(AppTheme.textSpanishInterim))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -359,15 +452,15 @@ struct TranslationTestView: View {
         .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private func registerInteraction() {
-        controlsVisible = true
+    private func registerNavBarAutoHide() {
+        navBarVisible = true
         guard isLive else { return }
-        chromeHideTask?.cancel()
-        chromeHideTask = Task { @MainActor in
+        navBarHideTask?.cancel()
+        navBarHideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled, isLive else { return }
             withAnimation(.easeOut(duration: 0.25)) {
-                controlsVisible = false
+                navBarVisible = false
             }
         }
     }
@@ -383,10 +476,6 @@ struct TranslationTestView: View {
                 }
             }
         }
-    }
-
-    private func cardBackground(for segment: TranslationSegment) -> Color {
-        segment.id == viewModel.displayFeed.snapshot.flashingID ? Color.white.opacity(0.13) : Color.white.opacity(segment.pendingCompletion ? 0.05 : 0.09)
     }
 
     private var statusPill: some View {
@@ -411,7 +500,8 @@ struct TranslationTestView: View {
     private func metricChip(title: String, value: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title.uppercased())
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .font(Font.caption2.weight(.bold))
+                .fontDesign(.rounded)
                 .foregroundStyle(.white.opacity(0.5))
             Text(value)
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
@@ -451,18 +541,18 @@ struct TranslationTestView: View {
     }
 
     private var waitingHint: String {
-        if viewModel.diagnostics.clipping { return "Input is clipping. Move the phone farther from the speaker or lower the source level." }
-        if viewModel.diagnostics.rmsLevel < 0.015 { return "Input is low. Move the phone closer to the preacher or PA." }
+        if viewModel.diagnostics.clipping { return "Audio is a bit too loud. Move back from the speaker or lower the volume." }
+        if viewModel.diagnostics.rmsLevel < 0.015 { return "Hard to hear the service. Move closer to the speaker or sound system." }
         if let lastInterimAt = viewModel.displayFeed.snapshot.lastInterimAt, viewModel.displayFeed.snapshot.lastFinalAt == nil, Date().timeIntervalSince(lastInterimAt) > 6 {
-            return "Interim speech is arriving, but STT is not settling on a final phrase yet."
+            return "We’re still catching phrases—this can take a few seconds in noisy rooms."
         }
         if viewModel.displayFeed.snapshot.lastFinalAt != nil && viewModel.displayFeed.snapshot.lastTranslationAt == nil {
-            return "Spanish finals are arriving. Waiting for committed English."
+            return "Heard Spanish; waiting for the English to appear."
         }
         if let lastFinalAt = viewModel.displayFeed.snapshot.lastFinalAt, let lastTranslationAt = viewModel.displayFeed.snapshot.lastTranslationAt, lastTranslationAt < lastFinalAt, Date().timeIntervalSince(lastFinalAt) > 6 {
-            return "Spanish finals are arriving, but the translation stage is lagging behind."
+            return "Translation is a little behind. It should catch up shortly."
         }
-        return "Listening for speech..."
+        return "Listening for speech…"
     }
 
     private var activeSpanish: String {
@@ -473,12 +563,56 @@ struct TranslationTestView: View {
     }
 }
 
+private struct MicOnboardingSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let onContinue: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Microphone & live audio")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .fontDesign(.rounded)
+                Text("ChurchBridge uses your microphone to hear the service while you read the English text. Only audio you choose to send is streamed to the server you configure in Settings—typically your church’s ChurchBridge endpoint.")
+                    .font(.body)
+                    .fontDesign(.rounded)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Agree and start listening", action: onContinue)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.accentColor)
+                    .frame(maxWidth: .infinity)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .navigationTitle("Before you listen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Not now") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct AboutSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
+                if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                   let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String {
+                    Section {
+                        Text("Version \(v) (\(b))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Section("What ChurchBridge does") {
                     Text("ChurchBridge is more than a translator. It helps carry the emotion, emphasis, and meaning of a live sermon across languages while you read along.")
                     Text("As the speaker talks, the app writes the English translation in real time and enriches key moments with likely scripture references.")
@@ -570,8 +704,17 @@ private struct SettingsSheet: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                   let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String {
+                    Section {
+                        Text("ChurchBridge \(v) (\(b))")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
-            .navigationTitle("Advanced")
+            .navigationTitle("Settings")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
@@ -589,10 +732,20 @@ private struct DiagnosticsSheet: View {
         NavigationStack {
             List {
                 Section("Status") {
+                    if !viewModel.userFacingLatestError.isEmpty {
+                        LabeledContent("Error (in app)", value: viewModel.userFacingLatestError)
+                    }
                     LabeledContent("Stream", value: viewModel.streamStatus.rawValue.capitalized)
                     LabeledContent("Display Feed", value: viewModel.displayConnected ? "Connected" : "Disconnected")
                     LabeledContent("Input Route", value: viewModel.diagnostics.routeName)
                     LabeledContent("Capture Path", value: viewModel.diagnostics.capturePath)
+                }
+
+                if !viewModel.latestError.isEmpty {
+                    Section("Error (raw)") {
+                        Text(viewModel.latestError)
+                            .font(.system(.caption, design: .monospaced))
+                    }
                 }
 
                 Section("Audio") {
@@ -941,6 +1094,7 @@ private struct ChapterReaderSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceReaderMotion
     @State private var currentRequest: ChapterReaderRequest
     @State private var loadedChapters: [LoadedBibleChapter] = []
     @State private var books: [BibleBook] = []
@@ -1056,11 +1210,21 @@ private struct ChapterReaderSheet: View {
                         }
                     }
                 } else {
-                    ContentUnavailableView(
-                        "Chapter unavailable",
-                        systemImage: "book.closed",
-                        description: Text(errorMessage.isEmpty ? "We couldn't load this chapter right now." : errorMessage)
-                    )
+                    VStack(spacing: 20) {
+                        ContentUnavailableView(
+                            "Chapter unavailable",
+                            systemImage: "book.closed",
+                            description: Text(errorMessage.isEmpty ? "We couldn't load this chapter right now." : errorMessage)
+                        )
+                        if !errorMessage.isEmpty {
+                            Button("Try again") {
+                                isLoading = true
+                                errorMessage = ""
+                                Task { await loadChapter() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
                 }
             }
             .background(Color(uiColor: .systemGroupedBackground))
@@ -1070,23 +1234,33 @@ private struct ChapterReaderSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text(navigationBarChapterTitle)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .contextMenu {
-                            Button {
-                                copyCurrentReferenceToPasteboard()
-                            } label: {
-                                Label("Copy reference", systemImage: "doc.on.doc")
-                            }
-                            Button {
-                                showTableOfContents = true
-                            } label: {
-                                Label("Open contents", systemImage: "list.bullet")
-                            }
+                    VStack(spacing: 4) {
+                        Text(navigationBarChapterTitle)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        if let p = focusedChapterReadProgress {
+                            ProgressView(value: p, total: 1) {}
+                                .labelsHidden()
+                                .progressViewStyle(BibleChapterReadProgressStyle())
+                                .frame(height: 2)
+                                .frame(maxWidth: 200)
                         }
-                        .accessibilityHint("Opens a menu to copy the reference or open contents")
+                    }
+                    .contextMenu {
+                        Button {
+                            copyCurrentReferenceToPasteboard()
+                        } label: {
+                            Label("Copy reference", systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            showTableOfContents = true
+                        } label: {
+                            Label("Open contents", systemImage: "list.bullet")
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint("Opens a menu to copy the reference or open contents")
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -1109,6 +1283,14 @@ private struct ChapterReaderSheet: View {
 
     private var navigationBarChapterTitle: String {
         "\(currentRequest.book) \(currentRequest.chapter)"
+    }
+
+    /// Read progress for the chapter currently reflected in the title (and loaded).
+    private var focusedChapterReadProgress: CGFloat? {
+        guard let loaded = loadedChapters.first(where: {
+            $0.request.book == currentRequest.book && $0.request.chapter == currentRequest.chapter
+        }) else { return nil }
+        return readProgressInFocusedChapter(loaded)
     }
 
     private var previousChapterLoadingBlock: some View {
@@ -1171,8 +1353,10 @@ private struct ChapterReaderSheet: View {
         if let h = currentRequest.highlightVerse {
             let id = verseRowScrollID(book: currentRequest.book, chapter: currentRequest.chapter, verse: h)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(id, anchor: .center)
+                if self.reduceReaderMotion {
+                    proxy.scrollTo(id, anchor: .top)
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
                 }
             }
         } else if let loaded = loadedChapters.first(where: {
@@ -1180,8 +1364,10 @@ private struct ChapterReaderSheet: View {
         }), let v = loaded.chapter.verses.map(\.verse).min() {
             let id = verseRowScrollID(book: currentRequest.book, chapter: currentRequest.chapter, verse: v)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                withAnimation(.easeOut(duration: 0.2)) {
+                if self.reduceReaderMotion {
                     proxy.scrollTo(id, anchor: .top)
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .top) }
                 }
             }
         }
@@ -1220,14 +1406,12 @@ private struct ChapterReaderSheet: View {
         Task { await appendChapter(n) }
     }
 
-    private func postLoadPrefetchNeighbors() async {
+    private func postLoadPrefetchNeighbors(allowPrepend: Bool = true) async {
         guard loadedChapters.count == 1, let only = loadedChapters.first, books.count > 0 else { return }
-        let prevR = request(before: only.request)
-        let nextR = request(after: only.request)
-        if let p = prevR, !loadedChapters.contains(where: { $0.request.book == p.book && $0.request.chapter == p.chapter }) {
+        if allowPrepend, let p = request(before: only.request), !loadedChapters.contains(where: { $0.request.book == p.book && $0.request.chapter == p.chapter }) {
             await prependChapter(p)
         }
-        if let n = nextR, !loadedChapters.contains(where: { $0.request.book == n.book && $0.request.chapter == n.chapter }) {
+        if let n = request(after: only.request), !loadedChapters.contains(where: { $0.request.book == n.book && $0.request.chapter == n.chapter }) {
             await appendChapter(n)
         }
     }
@@ -1287,8 +1471,8 @@ private struct ChapterReaderSheet: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
-        if errorMessage.isEmpty, loadedChapters.count == 1 {
-            Task { await postLoadPrefetchNeighbors() }
+        if errorMessage.isEmpty, loadedChapters.count == 1, currentRequest.highlightVerse == nil {
+            Task { await postLoadPrefetchNeighbors(allowPrepend: true) }
         }
     }
 
@@ -1323,12 +1507,26 @@ private struct ChapterReaderSheet: View {
 
     private func scrollToHighlight(using proxy: ScrollViewProxy) {
         guard let highlightVerse = currentRequest.highlightVerse else { return }
-        let id = verseRowScrollID(book: currentRequest.book, chapter: currentRequest.chapter, verse: highlightVerse)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo(id, anchor: .center)
+        let id: String
+        if let loaded = loadedChapters.first(where: { $0.request.book == currentRequest.book && $0.request.chapter == currentRequest.chapter }) {
+            id = verseRowScrollID(book: loaded.chapter.book, chapter: loaded.chapter.chapter, verse: highlightVerse)
+        } else {
+            id = verseRowScrollID(book: currentRequest.book, chapter: currentRequest.chapter, verse: highlightVerse)
+        }
+        func go(deadline: TimeInterval) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + deadline) {
+                if self.reduceReaderMotion {
+                    proxy.scrollTo(id, anchor: .top)
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(id, anchor: .center)
+                    }
+                }
             }
         }
+        go(deadline: 0.12)
+        go(deadline: 0.4)
+        go(deadline: 0.75)
     }
 
     private func chapterSection(for loaded: LoadedBibleChapter) -> some View {
@@ -1339,23 +1537,6 @@ private struct ChapterReaderSheet: View {
                     .fontWeight(.bold)
                     .fontDesign(.rounded)
                     .foregroundColor(cardInk)
-                if let p = readProgressInFocusedChapter(loaded) {
-                    ProgressView(value: p, total: 1.0) {}
-                        .labelsHidden()
-                        .progressViewStyle(BibleChapterReadProgressStyle())
-                    .frame(height: 2)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Read position in this chapter")
-                    .accessibilityValue("\(Int((p * 100).rounded())) percent")
-                }
-                if loaded.request.book == currentRequest.book, loaded.request.chapter == currentRequest.chapter, let highlightVerse = loaded.request.highlightVerse {
-                    Text("Opened at verse \(highlightVerse)")
-                        .font(.footnote)
-                        .fontWeight(.semibold)
-                        .fontDesign(.rounded)
-                        .foregroundStyle(Color.accentColor)
-                }
             }
 
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -1480,8 +1661,8 @@ private struct ChapterReaderSheet: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
-        if errorMessage.isEmpty, loadedChapters.count == 1 {
-            Task { await postLoadPrefetchNeighbors() }
+        if errorMessage.isEmpty, loadedChapters.count == 1, currentRequest.highlightVerse == nil {
+            Task { await postLoadPrefetchNeighbors(allowPrepend: true) }
         }
     }
 
@@ -1573,29 +1754,8 @@ private struct BibleContentsSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-                HStack {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Label("Done", systemImage: "xmark")
-                            .labelStyle(.titleAndIcon)
-                    }
-                    .buttonStyle(.plain)
-
-                    Spacer()
-
-                    Button {
-                        showBookPicker = true
-                    } label: {
-                        Label("Change Book", systemImage: "books.vertical")
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
 
                 Divider()
 
@@ -1630,6 +1790,18 @@ private struct BibleContentsSheet: View {
                 }
             }
             .navigationTitle("Contents")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showBookPicker = true
+                    } label: {
+                        Label("Book", systemImage: "books.vertical")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .sheet(isPresented: $showBookPicker) {
                 BibleBookPickerSheet(books: books, currentRequest: currentRequest) { book in
                     showBookPicker = false
