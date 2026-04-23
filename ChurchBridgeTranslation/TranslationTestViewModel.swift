@@ -47,6 +47,7 @@ final class TranslationTestViewModel {
     let displayFeed: DisplayFeedStore
     let audioCapture: AudioCaptureManager
 
+    var bibleData = BibleDataManager()
     var bibleVersions: [BibleVersionOption] = []
     var bibleVersionsError = ""
     var latestError = ""
@@ -117,6 +118,7 @@ final class TranslationTestViewModel {
     func onAppear() async {
         await connectDisplay()
         await loadBibleVersions()
+        await bibleData.prepare(baseURL: settings.apiBaseURL)
     }
 
     func loadBibleVersions() async {

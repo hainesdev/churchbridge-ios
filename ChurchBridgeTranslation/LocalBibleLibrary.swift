@@ -1,9 +1,8 @@
 import Foundation
 import SQLite3
 
-/// Actor-isolated wrapper around the bundled bible_ios.sqlite.
-/// All three versions (ASV, KJV, RVR1960) are available instantly —
-/// no network required for chapter or book lookups.
+/// Actor-isolated wrapper around bible_ios.sqlite.
+/// Opened explicitly by BibleDataManager once the file is available.
 actor LocalBibleLibrary {
     static let shared = LocalBibleLibrary()
 
@@ -13,7 +12,6 @@ actor LocalBibleLibrary {
         BibleVersionOption(slug: "rvr1960", name: "Reina-Valera 1960",         languageCode: "es"),
     ]
 
-    /// Fast synchronous check — safe to call from any context.
     static func isAvailable(_ slug: String) -> Bool {
         bundledVersions.contains { $0.slug == slug }
     }
@@ -21,22 +19,32 @@ actor LocalBibleLibrary {
     // MARK: - Private state
 
     private var db: OpaquePointer?
-
-    // Caches — populated lazily, live for the app session.
-    private var versionIDCache:   [String: Int32]    = [:]
-    private var versionNameCache: [String: String]   = [:]
-    private var bookIDCache:      [String: Int32]    = [:]  // canonical_name -> book_id
+    private var versionIDCache:   [String: Int32]       = [:]
+    private var versionNameCache: [String: String]      = [:]
+    private var bookIDCache:      [String: Int32]       = [:]
     private var booksCache:       [String: [BibleBook]] = [:]
 
-    private init() {
-        guard let url = Bundle.main.url(forResource: "bible_ios", withExtension: "sqlite") else {
-            return
-        }
+    private init() {}
+
+    // MARK: - Lifecycle
+
+    /// Open (or re-open) the database at the given URL.
+    /// Returns true if the database opened successfully.
+    @discardableResult
+    func open(at url: URL) -> Bool {
+        if db != nil { sqlite3_close(db); db = nil }
+        versionIDCache   = [:]
+        versionNameCache = [:]
+        bookIDCache      = [:]
+        booksCache       = [:]
         let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
-        if sqlite3_open_v2(url.path, &db, flags, nil) != SQLITE_OK {
-            db = nil
+        guard sqlite3_open_v2(url.path, &db, flags, nil) == SQLITE_OK else {
+            db = nil; return false
         }
+        return true
     }
+
+    var isReady: Bool { db != nil }
 
     // MARK: - Public API
 
@@ -65,18 +73,13 @@ actor LocalBibleLibrary {
                   let osisPtr = sqlite3_column_text(stmt, 1),
                   let testPtr = sqlite3_column_text(stmt, 3)
             else { continue }
-            let bookID       = Int(sqlite3_column_int(stmt, 0))
-            let name         = String(cString: namePtr)
-            let osisID       = String(cString: osisPtr)
-            let testament    = String(cString: testPtr)
-            let chapterCount = Int(sqlite3_column_int(stmt, 4))
             result.append(BibleBook(
                 bookID:       index,
-                bookName:     name,
-                bookOrder:    bookID,
-                osisID:       osisID,
-                testament:    testament,
-                chapterCount: chapterCount
+                bookName:     String(cString: namePtr),
+                bookOrder:    Int(sqlite3_column_int(stmt, 0)),
+                osisID:       String(cString: osisPtr),
+                testament:    String(cString: testPtr),
+                chapterCount: Int(sqlite3_column_int(stmt, 4))
             ))
             index += 1
         }
@@ -84,6 +87,60 @@ actor LocalBibleLibrary {
         return result
     }
 
+    /// Load every chapter in a book at once — no per-chapter fetches needed.
+    func allChapters(versionSlug: String, book: String) -> [ScriptureChapter] {
+        guard let versionID = resolveVersionID(slug: versionSlug),
+              let bookID    = resolveBookID(canonicalName: book)
+        else { return [] }
+
+        let sql = """
+            SELECT chapter, verse, text
+            FROM bible_verses
+            WHERE version_id = ? AND book_id = ?
+            ORDER BY chapter, verse
+            """
+        var stmt: OpaquePointer?
+        guard prepare(sql, &stmt) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_int(stmt, 1, versionID)
+        sqlite3_bind_int(stmt, 2, bookID)
+
+        let versionName = versionNameCache[versionSlug] ?? versionSlug.uppercased()
+        let version = ScripturePassageVersion(slug: versionSlug, name: versionName)
+
+        var chapters: [ScriptureChapter] = []
+        var currentChapter = 0
+        var currentVerses: [ScripturePassageVerse] = []
+
+        func flush() {
+            guard currentChapter > 0 else { return }
+            chapters.append(ScriptureChapter(
+                version: version, book: book,
+                chapter: currentChapter, verses: currentVerses
+            ))
+        }
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let chNum   = Int(sqlite3_column_int(stmt, 0))
+            let verNum  = Int(sqlite3_column_int(stmt, 1))
+            let text    = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
+
+            if chNum != currentChapter {
+                flush()
+                currentChapter = chNum
+                currentVerses  = []
+            }
+            currentVerses.append(ScripturePassageVerse(
+                verse: verNum, text: text,
+                reference: "\(book) \(chNum):\(verNum)"
+            ))
+        }
+        flush()
+        return chapters
+    }
+
+    /// Single-chapter fetch — still used by VerseSheet previews.
     func chapter(versionSlug: String, book: String, chapterNumber: Int) -> ScriptureChapter? {
         guard let versionID = resolveVersionID(slug: versionSlug),
               let bookID    = resolveBookID(canonicalName: book)
@@ -108,31 +165,28 @@ actor LocalBibleLibrary {
             let verseNum = Int(sqlite3_column_int(stmt, 0))
             let text = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
             verses.append(ScripturePassageVerse(
-                verse:     verseNum,
-                text:      text,
+                verse: verseNum, text: text,
                 reference: "\(book) \(chapterNumber):\(verseNum)"
             ))
         }
         guard !verses.isEmpty else { return nil }
-
         let versionName = versionNameCache[versionSlug] ?? versionSlug.uppercased()
-        let version = ScripturePassageVersion(slug: versionSlug, name: versionName)
-        return ScriptureChapter(version: version, book: book, chapter: chapterNumber, verses: verses)
+        return ScriptureChapter(
+            version: ScripturePassageVersion(slug: versionSlug, name: versionName),
+            book: book, chapter: chapterNumber, verses: verses
+        )
     }
 
     // MARK: - Private helpers
 
     private func resolveVersionID(slug: String) -> Int32? {
         if let cached = versionIDCache[slug] { return cached }
-        guard let db else { return nil }
-
+        guard db != nil else { return nil }
         var stmt: OpaquePointer?
         guard prepare("SELECT id, name FROM bible_versions WHERE slug = ? LIMIT 1", &stmt) else { return nil }
         defer { sqlite3_finalize(stmt) }
-
         bindText(stmt, 1, slug)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-
         let id   = sqlite3_column_int(stmt, 0)
         let name = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? slug.uppercased()
         versionIDCache[slug]   = id
@@ -142,15 +196,12 @@ actor LocalBibleLibrary {
 
     private func resolveBookID(canonicalName: String) -> Int32? {
         if let cached = bookIDCache[canonicalName] { return cached }
-        guard let db else { return nil }
-
+        guard db != nil else { return nil }
         var stmt: OpaquePointer?
         guard prepare("SELECT id FROM bible_books WHERE canonical_name = ? LIMIT 1", &stmt) else { return nil }
         defer { sqlite3_finalize(stmt) }
-
         bindText(stmt, 1, canonicalName)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-
         let id = sqlite3_column_int(stmt, 0)
         bookIDCache[canonicalName] = id
         return id
@@ -163,9 +214,7 @@ actor LocalBibleLibrary {
 
     private func bindText(_ stmt: OpaquePointer?, _ index: Int32, _ value: String) {
         guard let stmt else { return }
-        let bytes = Array(value.utf8CString)
-        // SQLITE_TRANSIENT (-1 cast): SQLite copies the string before returning.
         let transient = unsafeBitCast(-1 as Int, to: sqlite3_destructor_type?.self)
-        sqlite3_bind_text(stmt, index, bytes, -1, transient)
+        value.withCString { sqlite3_bind_text(stmt, index, $0, -1, transient) }
     }
 }
