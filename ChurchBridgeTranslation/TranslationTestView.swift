@@ -1391,7 +1391,7 @@ private struct BibleBookRow: View {
             Spacer()
             if isSelected {
                 Image(systemName: "checkmark")
-                    .foregroundStyle(.accentColor)
+                    .foregroundStyle(Color.accentColor)
             }
         }
         .padding(.horizontal, 16)
