@@ -18,6 +18,8 @@
 		A00000000000000000000109 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000009 /* SettingsStore.swift */; };
 		A0000000000000000000010A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000A /* Models.swift */; };
 		A0000000000000000000010B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000B /* Assets.xcassets */; };
+		A0000000000000000000010C /* bible_ios.sqlite in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000E /* bible_ios.sqlite */; };
+		A0000000000000000000010D /* LocalBibleLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000F /* LocalBibleLibrary.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +36,8 @@
 		A0000000000000000000000B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A0000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A0000000000000000000000D /* ChurchBridgeTranslation.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ChurchBridgeTranslation.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A0000000000000000000000E /* bible_ios.sqlite */ = {isa = PBXFileReference; lastKnownFileType = file; path = bible_ios.sqlite; sourceTree = "<group>"; };
+		A0000000000000000000000F /* LocalBibleLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalBibleLibrary.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +74,8 @@
 				A0000000000000000000000A /* Models.swift */,
 				A0000000000000000000000B /* Assets.xcassets */,
 				A0000000000000000000000C /* Info.plist */,
+				A0000000000000000000000E /* bible_ios.sqlite */,
+				A0000000000000000000000F /* LocalBibleLibrary.swift */,
 			);
 			path = ChurchBridgeTranslation;
 			sourceTree = "<group>";
@@ -141,6 +147,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A0000000000000000000010B /* Assets.xcassets in Resources */,
+				A0000000000000000000010C /* bible_ios.sqlite in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -154,6 +161,7 @@
 				A00000000000000000000104 /* AudioCaptureManager.swift in Sources */,
 				A00000000000000000000108 /* BibleVersionService.swift in Sources */,
 				A00000000000000000000101 /* ChurchBridgeTranslationApp.swift in Sources */,
+				A0000000000000000000010D /* LocalBibleLibrary.swift in Sources */,
 				A00000000000000000000106 /* DisplaySocketClient.swift in Sources */,
 				A00000000000000000000107 /* DisplayFeedStore.swift in Sources */,
 				A0000000000000000000010A /* Models.swift in Sources */,

@@ -1200,9 +1200,6 @@ private struct ChapterReaderSheet: View {
                             }
                             scrollToHighlight(using: proxy)
                         }
-                        .onChange(of: currentRequest.id) { _, _ in
-                            scrollToHighlight(using: proxy)
-                        }
                         .onChange(of: isLoadingPrevious) { wasLoading, isLoading in
                             if wasLoading, !isLoading {
                                 reanchorScrollAfterPrepend(using: proxy)
@@ -1393,7 +1390,20 @@ private struct ChapterReaderSheet: View {
         guard !loadedChapters.contains(where: { $0.request.book == p.book && $0.request.chapter == p.chapter })
         else { return }
         lastChapterFetchTime = Date()
-        Task { await prependChapter(p) }
+        if LocalBibleLibrary.isAvailable(p.versionSlug) {
+            isLoadingPrevious = true
+            Task {
+                if let ch = await LocalBibleLibrary.shared.chapter(
+                    versionSlug: p.versionSlug, book: p.book, chapterNumber: p.chapter
+                ) {
+                    loadedChapters.insert(LoadedBibleChapter(request: p, chapter: ch), at: 0)
+                    trimLoadedChapters(keeping: currentRequest)
+                }
+                isLoadingPrevious = false
+            }
+        } else {
+            Task { await prependChapter(p) }
+        }
     }
 
     private func considerAppendNextChapter() {
@@ -1403,7 +1413,37 @@ private struct ChapterReaderSheet: View {
         guard !loadedChapters.contains(where: { $0.request.book == n.book && $0.request.chapter == n.chapter })
         else { return }
         lastChapterFetchTime = Date()
-        Task { await appendChapter(n) }
+        if LocalBibleLibrary.isAvailable(n.versionSlug) {
+            isLoadingNext = true
+            Task {
+                if let ch = await LocalBibleLibrary.shared.chapter(
+                    versionSlug: n.versionSlug, book: n.book, chapterNumber: n.chapter
+                ) {
+                    loadedChapters.append(LoadedBibleChapter(request: n, chapter: ch))
+                    trimLoadedChapters(keeping: currentRequest)
+                }
+                isLoadingNext = false
+            }
+        } else {
+            Task { await appendChapter(n) }
+        }
+    }
+
+    private func loadLocalNeighborChapters() async {
+        guard books.count > 0 else { return }
+        let lib = LocalBibleLibrary.shared
+        if let p = request(before: currentRequest),
+           !loadedChapters.contains(where: { $0.request.book == p.book && $0.request.chapter == p.chapter }),
+           let ch = await lib.chapter(versionSlug: p.versionSlug, book: p.book, chapterNumber: p.chapter) {
+            loadedChapters.insert(LoadedBibleChapter(request: p, chapter: ch), at: 0)
+            trimLoadedChapters(keeping: currentRequest)
+        }
+        if let n = request(after: currentRequest),
+           !loadedChapters.contains(where: { $0.request.book == n.book && $0.request.chapter == n.chapter }),
+           let ch = await lib.chapter(versionSlug: n.versionSlug, book: n.book, chapterNumber: n.chapter) {
+            loadedChapters.append(LoadedBibleChapter(request: n, chapter: ch))
+            trimLoadedChapters(keeping: currentRequest)
+        }
     }
 
     private func postLoadPrefetchNeighbors(allowPrepend: Bool = true) async {
@@ -1439,12 +1479,42 @@ private struct ChapterReaderSheet: View {
     }
 
     private func loadChapter() async {
+        if LocalBibleLibrary.isAvailable(currentRequest.versionSlug) {
+            await loadLocalChapter()
+        } else {
+            await loadRemoteChapter()
+        }
+    }
+
+    private func loadLocalChapter() async {
+        let lib = LocalBibleLibrary.shared
+        async let booksTask   = lib.books(versionSlug: currentRequest.versionSlug)
+        async let chapterTask = lib.chapter(
+            versionSlug: currentRequest.versionSlug,
+            book: currentRequest.book,
+            chapterNumber: currentRequest.chapter
+        )
+        let (fetchedBooks, fetchedChapter) = await (booksTask, chapterTask)
+        books = fetchedBooks
+        if let ch = fetchedChapter {
+            loadedChapters = [LoadedBibleChapter(request: currentRequest, chapter: ch)]
+            if shouldPersistLocation { persistLocation(for: currentRequest) }
+            if showContentsOnAppear { showTableOfContents = true }
+        } else {
+            errorMessage = "Chapter not available."
+        }
+        isLoading = false
+        if errorMessage.isEmpty {
+            Task { await loadLocalNeighborChapters() }
+        }
+    }
+
+    private func loadRemoteChapter() async {
         guard let baseURL else {
             errorMessage = "Missing backend base URL."
             isLoading = false
             return
         }
-
         do {
             async let booksResponse = service.fetchBooks(
                 baseURL: baseURL,
@@ -1461,12 +1531,8 @@ private struct ChapterReaderSheet: View {
             let (fetchedBooks, chapter) = try await (booksResponse, chapterResponse)
             books = fetchedBooks
             loadedChapters = [LoadedBibleChapter(request: currentRequest, chapter: chapter)]
-            if shouldPersistLocation {
-                persistLocation(for: currentRequest)
-            }
-            if showContentsOnAppear {
-                showTableOfContents = true
-            }
+            if shouldPersistLocation { persistLocation(for: currentRequest) }
+            if showContentsOnAppear { showTableOfContents = true }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1640,29 +1706,56 @@ private struct ChapterReaderSheet: View {
     }
 
     private func jumpTo(request: ChapterReaderRequest) async {
-        guard let baseURL else { return }
         showTableOfContents = false
         isLoading = true
         errorMessage = ""
         shouldPersistLocation = true
         canPrefetchOnScroll = false
         currentRequest = request
-        do {
-            let chapter = try await service.fetchChapter(
-                baseURL: baseURL,
-                churchID: churchID,
+
+        if LocalBibleLibrary.isAvailable(request.versionSlug) {
+            let lib = LocalBibleLibrary.shared
+            async let booksTask   = lib.books(versionSlug: request.versionSlug)
+            async let chapterTask = lib.chapter(
                 versionSlug: request.versionSlug,
                 book: request.book,
-                chapter: request.chapter
+                chapterNumber: request.chapter
             )
-            loadedChapters = [LoadedBibleChapter(request: request, chapter: chapter)]
-            persistLocation(for: request)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isLoading = false
-        if errorMessage.isEmpty, loadedChapters.count == 1, currentRequest.highlightVerse == nil {
-            Task { await postLoadPrefetchNeighbors(allowPrepend: true) }
+            let (fetchedBooks, fetchedChapter) = await (booksTask, chapterTask)
+            books = fetchedBooks
+            if let ch = fetchedChapter {
+                loadedChapters = [LoadedBibleChapter(request: request, chapter: ch)]
+                persistLocation(for: request)
+            } else {
+                errorMessage = "Chapter not available."
+            }
+            isLoading = false
+            if errorMessage.isEmpty {
+                Task { await loadLocalNeighborChapters() }
+            }
+        } else {
+            guard let baseURL else {
+                errorMessage = "Missing backend base URL."
+                isLoading = false
+                return
+            }
+            do {
+                let chapter = try await service.fetchChapter(
+                    baseURL: baseURL,
+                    churchID: churchID,
+                    versionSlug: request.versionSlug,
+                    book: request.book,
+                    chapter: request.chapter
+                )
+                loadedChapters = [LoadedBibleChapter(request: request, chapter: chapter)]
+                persistLocation(for: request)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isLoading = false
+            if errorMessage.isEmpty, loadedChapters.count == 1, currentRequest.highlightVerse == nil {
+                Task { await postLoadPrefetchNeighbors(allowPrepend: true) }
+            }
         }
     }
 
