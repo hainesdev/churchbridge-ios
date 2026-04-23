@@ -87,47 +87,47 @@ actor LocalBibleLibrary {
         return result
     }
 
-    /// Load every chapter in a book at once — no per-chapter fetches needed.
-    func allChapters(versionSlug: String, book: String) -> [ScriptureChapter] {
-        guard let versionID = resolveVersionID(slug: versionSlug),
-              let bookID    = resolveBookID(canonicalName: book)
-        else { return [] }
+    /// Load every chapter for every book — the entire Bible — in one pass.
+    func allChapters(versionSlug: String) -> [ScriptureChapter] {
+        guard let versionID = resolveVersionID(slug: versionSlug) else { return [] }
 
         let sql = """
-            SELECT chapter, verse, text
-            FROM bible_verses
-            WHERE version_id = ? AND book_id = ?
-            ORDER BY chapter, verse
+            SELECT bb.canonical_name, bv.chapter, bv.verse, bv.text
+            FROM bible_verses bv
+            JOIN bible_books bb ON bv.book_id = bb.id
+            WHERE bv.version_id = ?
+            ORDER BY bb.id, bv.chapter, bv.verse
             """
         var stmt: OpaquePointer?
         guard prepare(sql, &stmt) else { return [] }
         defer { sqlite3_finalize(stmt) }
-
         sqlite3_bind_int(stmt, 1, versionID)
-        sqlite3_bind_int(stmt, 2, bookID)
 
         let versionName = versionNameCache[versionSlug] ?? versionSlug.uppercased()
         let version = ScripturePassageVersion(slug: versionSlug, name: versionName)
 
         var chapters: [ScriptureChapter] = []
+        var currentBook = ""
         var currentChapter = 0
         var currentVerses: [ScripturePassageVerse] = []
 
         func flush() {
             guard currentChapter > 0 else { return }
             chapters.append(ScriptureChapter(
-                version: version, book: book,
+                version: version, book: currentBook,
                 chapter: currentChapter, verses: currentVerses
             ))
         }
 
         while sqlite3_step(stmt) == SQLITE_ROW {
-            let chNum   = Int(sqlite3_column_int(stmt, 0))
-            let verNum  = Int(sqlite3_column_int(stmt, 1))
-            let text    = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
+            let book    = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
+            let chNum   = Int(sqlite3_column_int(stmt, 1))
+            let verNum  = Int(sqlite3_column_int(stmt, 2))
+            let text    = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? ""
 
-            if chNum != currentChapter {
+            if book != currentBook || chNum != currentChapter {
                 flush()
+                currentBook    = book
                 currentChapter = chNum
                 currentVerses  = []
             }

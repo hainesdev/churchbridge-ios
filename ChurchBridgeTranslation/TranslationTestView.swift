@@ -1192,21 +1192,9 @@ private struct ChapterReaderSheet: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
-                    if let prev = previousBook {
-                        bookBoundaryButton("← \(prev.bookName)") {
-                            Task { await navigateTo(book: prev.bookName, chapter: prev.chapterCount, using: proxy) }
-                        }
-                    }
-                    ForEach(chapters, id: \.chapter) { chapter in
-                        if chapter.chapter != chapters.first?.chapter {
-                            chapterDivider
-                        }
+                    ForEach(Array(chapters.enumerated()), id: \.element.reference) { idx, chapter in
+                        if idx > 0 { chapterDivider }
                         chapterSection(for: chapter)
-                    }
-                    if let next = nextBook {
-                        bookBoundaryButton("\(next.bookName) →") {
-                            Task { await navigateTo(book: next.bookName, chapter: 1, using: proxy) }
-                        }
                     }
                 }
                 .padding(16)
@@ -1235,18 +1223,6 @@ private struct ChapterReaderSheet: View {
             .accessibilityHidden(true)
     }
 
-    private func bookBoundaryButton(_ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
     private func chapterSection(for chapter: ScriptureChapter) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(chapter.reference)
@@ -1269,12 +1245,12 @@ private struct ChapterReaderSheet: View {
                 let f = geo.frame(in: .named("bibleScroll"))
                 Color.clear.preference(
                     key: BibleChapterFrameKey.self,
-                    value: [BibleChapterFrame(id: "\(chapter.chapter)", minY: f.minY, maxY: f.maxY)]
+                    value: [BibleChapterFrame(id: "\(chapter.book)|\(chapter.chapter)", minY: f.minY, maxY: f.maxY)]
                 )
             }
             .allowsHitTesting(false)
         }
-        .id("chapter-\(chapter.chapter)")
+        .id("chapter-\(chapter.book)|\(chapter.chapter)")
     }
 
     @ViewBuilder
@@ -1365,21 +1341,9 @@ private struct ChapterReaderSheet: View {
         ChapterReaderRequest(versionSlug: versionSlug, versionName: versionName, book: currentBook, chapter: focusedChapter, highlightVerse: nil)
     }
 
-    private var previousBook: BibleBook? {
-        guard isLocalVersion, let idx = books.firstIndex(where: { $0.bookName == currentBook }), idx > 0
-        else { return nil }
-        return books[idx - 1]
-    }
-
-    private var nextBook: BibleBook? {
-        guard isLocalVersion, let idx = books.firstIndex(where: { $0.bookName == currentBook }), idx + 1 < books.count
-        else { return nil }
-        return books[idx + 1]
-    }
-
     private var focusedChapterReadProgress: CGFloat? {
         let focalY = scrollY + focalLineFromTop
-        let id = "\(focusedChapter)"
+        let id = "\(currentBook)|\(focusedChapter)"
         guard let f = chapterFrameHints.first(where: { $0.id == id }) else { return nil }
         let height = f.maxY - f.minY
         guard height > 2, focalY >= f.minY - 2, focalY <= f.maxY + 2 else { return nil }
@@ -1394,7 +1358,7 @@ private struct ChapterReaderSheet: View {
         isLoading = true
         errorMessage = ""
         if isLocalVersion {
-            await loadLocalBook()
+            await loadLocalBible()
         } else {
             await loadRemoteChapter()
         }
@@ -1404,14 +1368,14 @@ private struct ChapterReaderSheet: View {
         if showContentsOnAppear { showTableOfContents = true }
     }
 
-    private func loadLocalBook() async {
+    private func loadLocalBible() async {
         let lib = LocalBibleLibrary.shared
         async let booksTask = lib.books(versionSlug: versionSlug)
-        async let chaptersTask = lib.allChapters(versionSlug: versionSlug, book: currentBook)
+        async let chaptersTask = lib.allChapters(versionSlug: versionSlug)
         let (fetchedBooks, fetchedChapters) = await (booksTask, chaptersTask)
         books = fetchedBooks
         chapters = fetchedChapters
-        if chapters.isEmpty { errorMessage = "Book not available." }
+        if chapters.isEmpty { errorMessage = "Bible not available." }
     }
 
     private func loadRemoteChapter() async {
@@ -1432,40 +1396,30 @@ private struct ChapterReaderSheet: View {
             pendingScrollID = verseRowScrollID(book: currentBook, chapter: focusedChapter, verse: verse)
             pendingScrollCenter = true
         } else {
-            pendingScrollID = "chapter-\(focusedChapter)"
+            pendingScrollID = "chapter-\(currentBook)|\(focusedChapter)"
             pendingScrollCenter = false
         }
     }
 
     // MARK: - Navigation
 
-    private func navigateTo(book: String, chapter: Int, using proxy: ScrollViewProxy) async {
-        highlightVerse = nil
-        currentBook = book
-        focusedChapter = chapter
-        chapterFrameHints = []
-        await loadLocalBook()
-        persistLocation()
-        try? await Task.sleep(for: .milliseconds(80))
-        proxy.scrollTo("chapter-\(chapter)", anchor: .top)
-    }
-
     private func handleContentsSelection(_ req: ChapterReaderRequest) async {
         showTableOfContents = false
         highlightVerse = nil
+        currentBook = req.book
         focusedChapter = req.chapter
-        let bookChanged = req.book != currentBook
-        let chapterLoaded = !bookChanged && chapters.contains(where: { $0.chapter == req.chapter })
-        if bookChanged || !chapterLoaded {
-            if bookChanged { currentBook = req.book }
-            isLoading = true
-            if isLocalVersion { await loadLocalBook() } else { await loadRemoteChapter() }
-            pendingScrollID = "chapter-\(req.chapter)"
+        if isLocalVersion {
+            pendingScrollID = "chapter-\(req.book)|\(req.chapter)"
             pendingScrollCenter = false
-            isLoading = false
-            persistLocation()
         } else {
-            pendingScrollID = "chapter-\(req.chapter)"
+            let chapterLoaded = chapters.contains(where: { $0.book == req.book && $0.chapter == req.chapter })
+            if !chapterLoaded {
+                isLoading = true
+                await loadRemoteChapter()
+                isLoading = false
+                persistLocation()
+            }
+            pendingScrollID = "chapter-\(req.book)|\(req.chapter)"
             pendingScrollCenter = false
         }
     }
@@ -1495,9 +1449,13 @@ private struct ChapterReaderSheet: View {
     private func updateFocusedChapter() {
         guard !chapterFrameHints.isEmpty else { return }
         let focalY = scrollY + focalLineFromTop
-        guard let best = chapterFrameHints.first(where: { $0.minY - 0.5 <= focalY && focalY < $0.maxY + 0.5 }),
-              let num = Int(best.id), num != focusedChapter
+        guard let best = chapterFrameHints.first(where: { $0.minY - 0.5 <= focalY && focalY < $0.maxY + 0.5 })
         else { return }
+        let parts = best.id.split(separator: "|", maxSplits: 1)
+        guard parts.count == 2, let num = Int(parts[1]) else { return }
+        let book = String(parts[0])
+        guard book != currentBook || num != focusedChapter else { return }
+        currentBook = book
         focusedChapter = num
         persistLocation()
     }
