@@ -1058,6 +1058,7 @@ private struct ChapterReaderSheet: View {
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var scrollContentMinY: CGFloat = 0
     @State private var scrollContentHeight: CGFloat = 0
+    @State private var armedEdgeDirection: ChapterEdgeDirection?
     @State private var edgePullDirection: ChapterEdgeDirection?
     @State private var edgePullDistance: CGFloat = 0
 
@@ -1065,6 +1066,7 @@ private struct ChapterReaderSheet: View {
     private let cardInk = Color.black.opacity(0.88)
     private let cardSecondaryInk = Color.black.opacity(0.62)
     private let edgeTolerance: CGFloat = 8
+    private let edgeActivationZone: CGFloat = 96
     private let edgeNavigationThreshold: CGFloat = 72
 
     private var verseCardPadding: CGFloat { dynamicTypeSize >= .accessibility1 ? 20 : 18 }
@@ -1165,7 +1167,7 @@ private struct ChapterReaderSheet: View {
                 .simultaneousGesture(edgeNavigationGesture)
                 .overlay(alignment: edgeHintAlignment) {
                     if let edgePullDirection {
-                        edgeNavigationHint(for: edgePullDirection)
+                        edgeNavigationHint()
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
                     }
@@ -1311,22 +1313,19 @@ private struct ChapterReaderSheet: View {
         "\(bibleData.isReady)-\(target.id)"
     }
 
-    private var isAtTopEdge: Bool {
-        scrollContentMinY >= -edgeTolerance
-    }
-
     private var isAtBottomEdge: Bool {
         let contentBottom = scrollContentMinY + scrollContentHeight
         return contentBottom <= scrollViewportHeight + edgeTolerance
     }
 
     private var edgeHintAlignment: Alignment {
-        edgePullDirection == .previous ? .top : .bottom
+        .bottom
     }
 
     private var edgeNavigationGesture: some Gesture {
         DragGesture(minimumDistance: 10)
             .onChanged { value in
+                armEdgeNavigationIfNeeded(for: value)
                 updateEdgePullState(with: value.translation.height)
             }
             .onEnded { _ in
@@ -1422,14 +1421,12 @@ private struct ChapterReaderSheet: View {
     }
 
     private func updateEdgePullState(with verticalTranslation: CGFloat) {
-        if isAtTopEdge, verticalTranslation > 0 {
-            edgePullDirection = .previous
-            edgePullDistance = verticalTranslation
-        } else if isAtBottomEdge, verticalTranslation < 0 {
+        if armedEdgeDirection == .next, verticalTranslation < 0 {
             edgePullDirection = .next
             edgePullDistance = -verticalTranslation
         } else {
-            resetEdgePullState()
+            edgePullDirection = nil
+            edgePullDistance = 0
         }
     }
 
@@ -1447,7 +1444,17 @@ private struct ChapterReaderSheet: View {
         )
     }
 
+    private func armEdgeNavigationIfNeeded(for value: DragGesture.Value) {
+        guard armedEdgeDirection == nil else { return }
+
+        let startY = value.startLocation.y
+        if startY >= max(0, scrollViewportHeight - edgeActivationZone), isAtBottomEdge {
+            armedEdgeDirection = .next
+        }
+    }
+
     private func resetEdgePullState() {
+        armedEdgeDirection = nil
         edgePullDirection = nil
         edgePullDistance = 0
     }
@@ -1500,9 +1507,9 @@ private struct ChapterReaderSheet: View {
         )
     }
 
-    private func edgeNavigationHint(for direction: ChapterEdgeDirection) -> some View {
+    private func edgeNavigationHint() -> some View {
         let ready = edgePullDistance >= edgeNavigationThreshold
-        let title = direction == .next ? "Next chapter" : "Previous chapter"
+        let title = "Next chapter"
         let subtitle = ready ? "Release to open" : "Pull to continue"
 
         return VStack(spacing: 4) {
@@ -1522,7 +1529,6 @@ private struct ChapterReaderSheet: View {
 }
 
 private enum ChapterEdgeDirection {
-    case previous
     case next
 }
 
