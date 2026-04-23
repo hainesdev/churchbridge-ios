@@ -79,7 +79,7 @@ struct TranslationTestView: View {
                 .presentationDetents([.medium])
             }
             .sheet(item: $selectedSegment) { segment in
-                VerseSheet(segment: segment, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID, settings: viewModel.settings)
+                VerseSheet(segment: segment, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID, settings: viewModel.settings, bibleData: viewModel.bibleData)
             }
             .sheet(item: $bibleReaderRequest) { request in
                 ChapterReaderSheet(request: request, baseURL: viewModel.settings.apiBaseURL, churchID: viewModel.settings.churchID, settings: viewModel.settings, bibleData: viewModel.bibleData)
@@ -856,6 +856,7 @@ private struct VerseSheet: View {
     let baseURL: URL?
     let churchID: String
     let settings: SettingsStore
+    let bibleData: BibleDataManager
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedItemID: String
@@ -865,11 +866,12 @@ private struct VerseSheet: View {
     private let cardSecondaryInk = Color.black.opacity(0.62)
     private let chipInk = Color(red: 0.13, green: 0.13, blue: 0.15)
 
-    init(segment: TranslationSegment, baseURL: URL?, churchID: String, settings: SettingsStore) {
+    init(segment: TranslationSegment, baseURL: URL?, churchID: String, settings: SettingsStore, bibleData: BibleDataManager) {
         self.segment = segment
         self.baseURL = baseURL
         self.churchID = churchID
         self.settings = settings
+        self.bibleData = bibleData
 
         let defaultID: String
         if let verse = segment.verseDetected {
@@ -926,7 +928,7 @@ private struct VerseSheet: View {
                 }
             }
             .sheet(item: $chapterRequest) { request in
-                ChapterReaderSheet(request: request, baseURL: baseURL, churchID: churchID, settings: settings)
+                ChapterReaderSheet(request: request, baseURL: baseURL, churchID: churchID, settings: settings, bibleData: bibleData)
             }
         }
     }
