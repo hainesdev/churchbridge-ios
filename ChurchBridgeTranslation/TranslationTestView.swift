@@ -209,7 +209,8 @@ struct TranslationTestView: View {
             versionName: versionName,
             book: book,
             chapter: chapter,
-            highlightVerse: viewModel.settings.lastBibleVerse
+            highlightVerse: viewModel.settings.lastBibleVerse,
+            highlightVerseEnd: nil
         )
     }
 
@@ -221,7 +222,8 @@ struct TranslationTestView: View {
             versionName: versionName,
             book: "Genesis",
             chapter: 1,
-            highlightVerse: nil
+            highlightVerse: nil,
+            highlightVerseEnd: nil
         )
     }
 
@@ -806,8 +808,9 @@ private struct ChapterReaderRequest: Identifiable, Equatable {
     let book: String
     let chapter: Int
     let highlightVerse: Int?
+    let highlightVerseEnd: Int?
 
-    var id: String { "\(versionSlug)-\(book)-\(chapter)-\(highlightVerse ?? 0)" }
+    var id: String { "\(versionSlug)-\(book)-\(chapter)-\(highlightVerse ?? 0)-\(highlightVerseEnd ?? 0)" }
 }
 
 
@@ -855,21 +858,21 @@ private struct VerseSheet: View {
                     if let selectedItem {
                         heroCard(for: selectedItem)
 
-                        if let sourcePassage = selectedItem.sourcePassage {
-                            passageCard(
-                                title: sourcePassage.version.name,
-                                languageLabel: "Spanish",
-                                passage: sourcePassage,
-                                accent: .orange
-                            )
-                        }
-
                         if let displayPassage = selectedItem.displayPassage {
                             passageCard(
                                 title: displayPassage.version.name,
                                 languageLabel: "English",
                                 passage: displayPassage,
                                 accent: .blue
+                            )
+                        }
+
+                        if let sourcePassage = selectedItem.sourcePassage {
+                            passageCard(
+                                title: sourcePassage.version.name,
+                                languageLabel: "Spanish",
+                                passage: sourcePassage,
+                                accent: .orange
                             )
                         }
 
@@ -979,7 +982,8 @@ private struct VerseSheet: View {
                         versionName: passage.version.name,
                         book: passage.book,
                         chapter: passage.chapter,
-                        highlightVerse: passage.verseStart
+                        highlightVerse: passage.verseStart,
+                        highlightVerseEnd: passage.verseEnd
                     )
                 }
                 .buttonStyle(.borderedProminent)
@@ -1055,19 +1059,12 @@ private struct ChapterReaderSheet: View {
     @State private var showTableOfContents = false
     @State private var scrollRequest = 0
     @State private var didAutoOpenContents = false
-    @State private var scrollViewportHeight: CGFloat = 0
-    @State private var scrollContentMinY: CGFloat = 0
-    @State private var scrollContentHeight: CGFloat = 0
-    @State private var armedEdgeDirection: ChapterEdgeDirection?
-    @State private var edgePullDirection: ChapterEdgeDirection?
-    @State private var edgePullDistance: CGFloat = 0
 
     private let service = BibleVersionService()
     private let cardInk = Color.black.opacity(0.88)
     private let cardSecondaryInk = Color.black.opacity(0.62)
-    private let edgeTolerance: CGFloat = 8
-    private let edgeActivationZone: CGFloat = 96
-    private let edgeNavigationThreshold: CGFloat = 72
+    private let cardTertiaryInk = Color.black.opacity(0.48)
+    private let horizontalSwipeThreshold: CGFloat = 72
 
     private var verseCardPadding: CGFloat { dynamicTypeSize >= .accessibility1 ? 20 : 18 }
     private var verseRowVerticalPadding: CGFloat { dynamicTypeSize >= .accessibility1 ? 12 : 10 }
@@ -1088,7 +1085,7 @@ private struct ChapterReaderSheet: View {
                 if isLoading {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let chapter {
+                } else if chapter != nil {
                     readerScrollView
                 } else if !bibleData.isReady && isLocalVersion {
                     bibleUnavailableView
@@ -1100,23 +1097,9 @@ private struct ChapterReaderSheet: View {
             .task(id: loadTaskID) {
                 await loadContent()
             }
+            .navigationTitle("\(target.book) \(target.chapter)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text("\(target.book) \(target.chapter)")
-                        .font(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .contextMenu {
-                            Button { copyCurrentReferenceToPasteboard() } label: {
-                                Label("Copy reference", systemImage: "doc.on.doc")
-                            }
-                            Button { showTableOfContents = true } label: {
-                                Label("Open contents", systemImage: "list.bullet")
-                            }
-                        }
-                        .accessibilityHint("Opens a menu to copy the reference or open contents")
-                }
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showTableOfContents = true } label: {
                         Label("Contents", systemImage: "list.bullet")
@@ -1138,75 +1121,38 @@ private struct ChapterReaderSheet: View {
 
     private var readerScrollView: some View {
         ScrollViewReader { proxy in
-            GeometryReader { geometry in
-                ScrollView {
-                    VStack(spacing: 0) {
-                        Color.clear
-                            .frame(height: 0)
-                            .id("chapter-top")
+            ScrollView {
+                VStack(spacing: 0) {
+                    Color.clear
+                        .frame(height: 0)
+                        .id("chapter-top")
 
-                        if let chapter {
-                            chapterSection(for: chapter)
-                                .padding(16)
-                                .background(
-                                    GeometryReader { contentGeometry in
-                                        Color.clear.preference(
-                                            key: ReaderContentMetricsKey.self,
-                                            value: ReaderContentMetrics(
-                                                minY: contentGeometry.frame(in: .named("reader-scroll")).minY,
-                                                height: contentGeometry.size.height
-                                            )
-                                        )
-                                    }
-                                )
-                        }
+                    if let chapter {
+                        chapterSection(for: chapter)
+                            .padding(16)
                     }
                 }
-                .coordinateSpace(name: "reader-scroll")
-                .contentShape(Rectangle())
-                .simultaneousGesture(edgeNavigationGesture)
-                .overlay(alignment: edgeHintAlignment) {
-                    if let edgePullDirection {
-                        edgeNavigationHint()
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                    }
-                }
-                .onAppear {
-                    scrollViewportHeight = geometry.size.height
-                    scrollToRequestedVerse(using: proxy)
-                }
-                .onChange(of: geometry.size.height) { _, newHeight in
-                    scrollViewportHeight = newHeight
-                }
-                .onChange(of: scrollRequest) { _, _ in
-                    resetEdgePullState()
-                    scrollToRequestedVerse(using: proxy)
-                }
-                .onPreferenceChange(ReaderContentMetricsKey.self) { metrics in
-                    scrollContentMinY = metrics.minY
-                    scrollContentHeight = metrics.height
-                }
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(chapterNavigationGesture)
+            .onAppear { scrollToRequestedVerse(using: proxy) }
+            .onChange(of: scrollRequest) { _, _ in
+                scrollToRequestedVerse(using: proxy)
             }
         }
     }
 
     private func chapterSection(for chapter: ScriptureChapter) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(chapter.book.uppercased())
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.accentColor)
-                Text("Chapter \(chapter.chapter)")
-                    .font(.system(.title2, design: .rounded, weight: .bold))
-                    .foregroundColor(cardInk)
-            }
-
+        VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(chapter.verses, id: \.verse) { verse in
                     verseRow(chapter: chapter, verse: verse)
                 }
+            }
+
+            if let nextChapter = adjacentChapterRequest(step: 1) {
+                nextChapterCue(for: nextChapter)
+                    .padding(.top, 8)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1217,7 +1163,12 @@ private struct ChapterReaderSheet: View {
 
     @ViewBuilder
     private func verseRow(chapter: ScriptureChapter, verse: ScripturePassageVerse) -> some View {
-        let isHighlighted = target.highlightVerse == verse.verse
+        let highlightStart = target.highlightVerse
+        let highlightEnd = target.highlightVerseEnd ?? highlightStart
+        let isHighlighted = highlightStart.map { start in
+            let end = highlightEnd ?? start
+            return (start...end).contains(verse.verse)
+        } ?? false
             && chapter.chapter == target.chapter
             && chapter.book == target.book
         HStack(alignment: .top, spacing: 12) {
@@ -1248,6 +1199,29 @@ private struct ChapterReaderSheet: View {
                 )
         }
         .id(verseRowScrollID(book: chapter.book, chapter: chapter.chapter, verse: verse.verse))
+    }
+
+    private func nextChapterCue(for request: ChapterReaderRequest) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+                .padding(.bottom, 10)
+
+            Text("Next: \(request.book) \(request.chapter)")
+                .font(.system(.headline, design: .rounded, weight: .semibold))
+                .foregroundColor(cardInk)
+
+            HStack(spacing: 6) {
+                Text("Swipe left to continue")
+                    .font(.system(.subheadline, design: .rounded))
+                Image(systemName: "arrow.left")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundColor(cardTertiaryInk)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 12)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Next chapter, \(request.book) \(request.chapter). Swipe left to continue.")
     }
 
     private var bibleUnavailableView: some View {
@@ -1305,7 +1279,8 @@ private struct ChapterReaderSheet: View {
             versionName: target.versionName,
             book: target.book,
             chapter: target.chapter,
-            highlightVerse: nil
+            highlightVerse: nil,
+            highlightVerseEnd: nil
         )
     }
 
@@ -1313,23 +1288,10 @@ private struct ChapterReaderSheet: View {
         "\(bibleData.isReady)-\(target.id)"
     }
 
-    private var isAtBottomEdge: Bool {
-        let contentBottom = scrollContentMinY + scrollContentHeight
-        return contentBottom <= scrollViewportHeight + edgeTolerance
-    }
-
-    private var edgeHintAlignment: Alignment {
-        .bottom
-    }
-
-    private var edgeNavigationGesture: some Gesture {
-        DragGesture(minimumDistance: 10)
-            .onChanged { value in
-                armEdgeNavigationIfNeeded(for: value)
-                updateEdgePullState(with: value.translation.height)
-            }
-            .onEnded { _ in
-                finishEdgePull()
+    private var chapterNavigationGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onEnded { value in
+                handleHorizontalSwipe(value.translation)
             }
     }
 
@@ -1384,7 +1346,6 @@ private struct ChapterReaderSheet: View {
     private func handleContentsSelection(_ req: ChapterReaderRequest) {
         target = req
         showTableOfContents = false
-        resetEdgePullState()
     }
 
     private func navigateToAdjacentChapter(step: Int) {
@@ -1403,7 +1364,8 @@ private struct ChapterReaderSheet: View {
                 versionName: target.versionName,
                 book: currentBook.bookName,
                 chapter: proposedChapter,
-                highlightVerse: nil
+                highlightVerse: nil,
+                highlightVerseEnd: nil
             )
         }
 
@@ -1416,47 +1378,16 @@ private struct ChapterReaderSheet: View {
             versionName: target.versionName,
             book: adjacentBook.bookName,
             chapter: step > 0 ? 1 : adjacentBook.chapterCount,
-            highlightVerse: nil
+            highlightVerse: nil,
+            highlightVerseEnd: nil
         )
     }
 
-    private func updateEdgePullState(with verticalTranslation: CGFloat) {
-        if armedEdgeDirection == .next, verticalTranslation < 0 {
-            edgePullDirection = .next
-            edgePullDistance = -verticalTranslation
-        } else {
-            edgePullDirection = nil
-            edgePullDistance = 0
-        }
-    }
-
-    private func finishEdgePull() {
-        defer { resetEdgePullState() }
-        guard edgePullDistance >= edgeNavigationThreshold, let edgePullDirection else { return }
-        let step = edgePullDirection == .next ? 1 : -1
-        guard let nextTarget = adjacentChapterRequest(step: step) else { return }
-        target = ChapterReaderRequest(
-            versionSlug: nextTarget.versionSlug,
-            versionName: nextTarget.versionName,
-            book: nextTarget.book,
-            chapter: nextTarget.chapter,
-            highlightVerse: nil
-        )
-    }
-
-    private func armEdgeNavigationIfNeeded(for value: DragGesture.Value) {
-        guard armedEdgeDirection == nil else { return }
-
-        let startY = value.startLocation.y
-        if startY >= max(0, scrollViewportHeight - edgeActivationZone), isAtBottomEdge {
-            armedEdgeDirection = .next
-        }
-    }
-
-    private func resetEdgePullState() {
-        armedEdgeDirection = nil
-        edgePullDirection = nil
-        edgePullDistance = 0
+    private func handleHorizontalSwipe(_ translation: CGSize) {
+        let horizontal = translation.width
+        let vertical = translation.height
+        guard abs(horizontal) >= horizontalSwipeThreshold, abs(horizontal) > abs(vertical) else { return }
+        navigateToAdjacentChapter(step: horizontal < 0 ? 1 : -1)
     }
 
     // MARK: - Scroll
@@ -1487,16 +1418,6 @@ private struct ChapterReaderSheet: View {
         "\(book) \(chapter):\(verse)"
     }
 
-    private func copyCurrentReferenceToPasteboard() {
-        let ref: String
-        if let verse = target.highlightVerse {
-            ref = "\(target.book) \(target.chapter):\(verse)"
-        } else {
-            ref = "\(target.book) \(target.chapter)"
-        }
-        UIPasteboard.general.string = ref
-    }
-
     private func persistLocation() {
         settings.saveBibleLocation(
             versionSlug: target.versionSlug,
@@ -1507,42 +1428,6 @@ private struct ChapterReaderSheet: View {
         )
     }
 
-    private func edgeNavigationHint() -> some View {
-        let ready = edgePullDistance >= edgeNavigationThreshold
-        let title = "Next chapter"
-        let subtitle = ready ? "Release to open" : "Pull to continue"
-
-        return VStack(spacing: 4) {
-            Text(title)
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.white)
-            Text(subtitle)
-                .font(.system(.caption, design: .rounded, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.82))
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.black.opacity(0.72), in: Capsule())
-        .opacity(min(1, max(0.35, edgePullDistance / edgeNavigationThreshold)))
-        .allowsHitTesting(false)
-    }
-}
-
-private enum ChapterEdgeDirection {
-    case next
-}
-
-private struct ReaderContentMetrics: Equatable {
-    var minY: CGFloat = 0
-    var height: CGFloat = 0
-}
-
-private struct ReaderContentMetricsKey: PreferenceKey {
-    static var defaultValue = ReaderContentMetrics()
-
-    static func reduce(value: inout ReaderContentMetrics, nextValue: () -> ReaderContentMetrics) {
-        value = nextValue()
-    }
 }
 
 private struct BibleContentsSheet: View {
@@ -1564,7 +1449,8 @@ private struct BibleContentsSheet: View {
                                     versionName: currentRequest.versionName,
                                     book: book.bookName,
                                     chapter: chapter,
-                                    highlightVerse: nil
+                                    highlightVerse: nil,
+                                    highlightVerseEnd: nil
                                 )
                             )
                             dismiss()
