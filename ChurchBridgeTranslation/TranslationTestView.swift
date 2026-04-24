@@ -25,7 +25,6 @@ struct TranslationTestView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("hasSeenMicOnboarding") private var hasSeenMicOnboarding = false
     @State private var selectedSegment: TranslationSegment?
-    @State private var revealedAlignmentBySegment: [Int: String] = [:]
     @State private var bibleReaderRequest: ChapterReaderRequest?
     @State private var showBibleContents = false
     @State private var scrollToLiveRequested = 0
@@ -36,6 +35,7 @@ struct TranslationTestView: View {
     @State private var navBarVisible = true
     @State private var navBarHideTask: Task<Void, Never>?
     @State private var liveDockScrollToken = 0
+    @State private var liveDockScrollTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -106,14 +106,23 @@ struct TranslationTestView: View {
             .task {
                 await viewModel.onAppear()
             }
-            .onChange(of: viewModel.displayFeed.snapshot.liveDock.english) { _, _ in
-                liveDockScrollToken += 1
+            .onChange(of: viewModel.displayFeed.snapshot.liveDock.english) { _, english in
+                guard !english.isEmpty else { return }
+                scheduleLiveDockScroll()
+            }
+            .onChange(of: viewModel.displayFeed.snapshot.liveDock.isVisible) { _, isVisible in
+                guard isVisible else {
+                    liveDockScrollTask?.cancel()
+                    return
+                }
+                scheduleLiveDockScroll()
             }
             .onChange(of: isLive) { _, live in
                 if live {
                     registerNavBarAutoHide()
                 } else {
                     navBarHideTask?.cancel()
+                    liveDockScrollTask?.cancel()
                     navBarVisible = true
                 }
             }
@@ -358,7 +367,6 @@ struct TranslationTestView: View {
     @ViewBuilder
     private func translationSegmentView(segment: TranslationSegment) -> some View {
         let hasVerses = segment.verseDetected != nil || !segment.verseSuggestions.isEmpty
-        let hasAlignment = !segment.phraseAlignment.isEmpty
         let isFlashed = !reduceMotion && segment.id == viewModel.displayFeed.snapshot.flashingID
         let englishColor: Color = {
             if reduceMotion { return .white }
@@ -366,94 +374,21 @@ struct TranslationTestView: View {
         }()
         let borderOpacity: Double = isFlashed ? 0.22 : 0.06
 
-        VStack(alignment: .leading, spacing: 14) {
-            if hasAlignment {
-                alignedEnglishView(segment: segment, englishColor: englishColor)
-            } else {
-                Text(segment.english)
-                    .font(translationTitleFont)
-                    .foregroundStyle(englishColor)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if hasAlignment {
-                alignmentRevealView(for: segment)
-            } else {
-                Text(segment.spanish)
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.white.opacity(AppTheme.textSpanishFinal))
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            Text(segment.english)
+                .font(translationTitleFont)
+                .foregroundStyle(englishColor)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if hasVerses {
                 versePillRow(for: segment)
             }
         }
-        .padding(20)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.liveCardBackground(flashed: isFlashed, pending: segment.pendingCompletion), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(borderOpacity), lineWidth: 1))
-    }
-
-    private func alignedEnglishView(segment: TranslationSegment, englishColor: Color) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Tap English to reveal the Spanish phrase")
-                .font(.system(.caption, design: .rounded, weight: .bold))
-                .foregroundStyle(.white.opacity(0.56))
-
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 120), spacing: 8, alignment: .leading)],
-                alignment: .leading,
-                spacing: 8
-            ) {
-                ForEach(segment.phraseAlignment) { phrase in
-                    let isRevealed = revealedAlignmentBySegment[segment.id] == phrase.id
-                    Button {
-                        toggleAlignmentReveal(segmentID: segment.id, phraseID: phrase.id)
-                    } label: {
-                        Text(phrase.englishText)
-                            .font(.system(.body, design: .rounded, weight: .semibold))
-                            .foregroundStyle(isRevealed ? Color.black : englishColor)
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(
-                                isRevealed ? AppTheme.newLineEmphasis : Color.white.opacity(0.06),
-                                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .stroke(Color.white.opacity(isRevealed ? 0.0 : 0.08), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func alignmentRevealView(for segment: TranslationSegment) -> some View {
-        if let revealedID = revealedAlignmentBySegment[segment.id],
-           let phrase = segment.phraseAlignment.first(where: { $0.id == revealedID }) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Spanish")
-                    .font(.system(.caption, design: .rounded, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.56))
-                Text(phrase.spanishText)
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.white.opacity(AppTheme.textSpanishFinal))
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else {
-            Text("Spanish stays hidden until you tap a phrase.")
-                .font(.system(.footnote, design: .rounded))
-                .foregroundStyle(.white.opacity(AppTheme.textTertiary))
-        }
+        .background(AppTheme.liveCardBackground(flashed: isFlashed, pending: segment.pendingCompletion), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.white.opacity(borderOpacity), lineWidth: 1))
     }
 
     private var translationTitleFont: Font {
@@ -501,23 +436,11 @@ struct TranslationTestView: View {
     }
 
     private var liveDock: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(.green.opacity(0.85))
-                    .frame(width: 8, height: 8)
-                Text("LIVE ENGLISH")
-                    .font(.system(.caption, design: .rounded, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.62))
-                Spacer()
-            }
-
-            liveDockTextArea
-        }
+        liveDockTextArea
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1))
+        .padding(14)
+        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1))
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 12)
@@ -540,17 +463,15 @@ struct TranslationTestView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .contentTransition(.interpolate)
                 .id("live-dock-text")
             }
             .frame(maxHeight: liveDockMaxHeight)
-            .animation(.easeOut(duration: 0.24), value: viewModel.displayFeed.snapshot.liveDock.english)
             .onChange(of: liveDockScrollToken) { _, _ in
                 guard viewModel.displayFeed.snapshot.liveDock.isVisible else { return }
                 if reduceMotion {
                     proxy.scrollTo("live-dock-text", anchor: .bottom)
                 } else {
-                    withAnimation(.easeOut(duration: 0.22)) {
+                    withAnimation(.easeOut(duration: 0.18)) {
                         proxy.scrollTo("live-dock-text", anchor: .bottom)
                     }
                 }
@@ -567,6 +488,15 @@ struct TranslationTestView: View {
         let base = CGFloat(viewModel.settings.translationTextSize)
         let scale = UIFont.preferredFont(forTextStyle: .body).pointSize / 17.0
         return min(40, max(20, base * min(scale, 1.35)))
+    }
+
+    private func scheduleLiveDockScroll() {
+        liveDockScrollTask?.cancel()
+        liveDockScrollTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(90))
+            guard !Task.isCancelled else { return }
+            liveDockScrollToken += 1
+        }
     }
 
     private func registerNavBarAutoHide() {
@@ -643,14 +573,6 @@ struct TranslationTestView: View {
                 .foregroundStyle(tint)
         }
         .buttonStyle(.plain)
-    }
-
-    private func toggleAlignmentReveal(segmentID: Int, phraseID: String) {
-        if revealedAlignmentBySegment[segmentID] == phraseID {
-            revealedAlignmentBySegment[segmentID] = nil
-        } else {
-            revealedAlignmentBySegment[segmentID] = phraseID
-        }
     }
 
     private func featureRow(icon: String, iconColor: Color, title: String, detail: String) -> some View {
