@@ -1202,8 +1202,8 @@ final class TranslationTestViewModel {
             "display_feed": [
                 "connected": displayFeed.snapshot.connected,
                 "segment_count": displayFeed.snapshot.segments.count,
-                "partial_spanish": displayFeed.snapshot.partialSpanish,
-                "partial_english": displayFeed.snapshot.partialEnglish,
+                "partial_spanish": displayFeed.snapshot.interimSpanish,
+                "partial_english": displayFeed.snapshot.liveDock.english,
                 "sermon_mode": displayFeed.snapshot.sermonMode,
                 "last_interim_at": jsonValue(displayFeed.snapshot.lastInterimAt?.ISO8601Format()),
                 "last_final_at": jsonValue(displayFeed.snapshot.lastFinalAt?.ISO8601Format()),
@@ -1661,9 +1661,9 @@ final class TranslationTestViewModel {
     }
 
     private static let translationEventTypes: Set<String> = [
-        "interim_translation",
-        "translation",
-        "translation_update",
-        "correction",
+        "live_translation",
+        "feed_commit",
+        "feed_revision",
+        "live_translation_clear",
     ]
 }

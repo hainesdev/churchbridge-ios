@@ -170,20 +170,32 @@ struct VerseSuggestion: Codable, Hashable {
 }
 
 struct TranslationSegment: Identifiable, Equatable {
-    let id: Int
+    let segmentID: Int
     var spanish: String
     var english: String
     var verseDetected: VerseDetection?
     var verseSuggestions: [VerseSuggestion] = []
     var pendingCompletion = false
     var terminalIncomplete = false
+
+    var id: Int { segmentID }
+}
+
+struct LiveTranslationDockState: Equatable {
+    var english = ""
+    var source = "live_translation"
+    var updatedAt: Date?
+
+    var isVisible: Bool {
+        !english.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 struct DisplayFeedSnapshot {
     var segments: [TranslationSegment] = []
-    var spanishLines: [String] = []
-    var partialSpanish = ""
-    var partialEnglish = ""
+    var liveDock = LiveTranslationDockState()
+    var interimSpanish = ""
+    var finalSpanishLines: [String] = []
     var flashingID: Int?
     var connected = false
     var sermonMode = "exposition"

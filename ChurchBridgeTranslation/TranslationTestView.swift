@@ -54,7 +54,12 @@ struct TranslationTestView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(navBarVisible ? .visible : .hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                mainControlBar
+                VStack(spacing: 0) {
+                    if isLive || viewModel.displayFeed.snapshot.liveDock.isVisible {
+                        liveDock
+                    }
+                    mainControlBar
+                }
             }
             .sheet(isPresented: $viewModel.showSettings) {
                 SettingsSheet(viewModel: viewModel)
@@ -291,17 +296,13 @@ struct TranslationTestView: View {
                     liveStatusStrip
                         .transition(.move(edge: .top).combined(with: .opacity))
 
-                    if viewModel.displayFeed.snapshot.segments.isEmpty, activeSpanish.isEmpty, viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
+                    if viewModel.displayFeed.snapshot.segments.isEmpty, !viewModel.displayFeed.snapshot.liveDock.isVisible {
                         waitingCard
                     }
 
                     ForEach(viewModel.displayFeed.snapshot.segments) { segment in
                         translationSegmentView(segment: segment)
                             .id(segment.id)
-                    }
-
-                    if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty || !activeSpanish.isEmpty {
-                        partialCard
                     }
 
                     Color.clear.frame(height: 1).id("live-bottom")
@@ -437,22 +438,37 @@ struct TranslationTestView: View {
         .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private var partialCard: some View {
+    private var liveDock: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !viewModel.displayFeed.snapshot.partialEnglish.isEmpty {
-                Text("\(viewModel.displayFeed.snapshot.partialEnglish)\u{258C}")
-                    .font(translationTitleFont)
-                    .foregroundStyle(.white.opacity(0.78))
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(.green.opacity(0.85))
+                    .frame(width: 8, height: 8)
+                Text("LIVE ENGLISH")
+                    .font(.system(.caption, design: .rounded, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.62))
+                Spacer()
             }
-            if !activeSpanish.isEmpty {
-                Text(activeSpanish)
+
+            if viewModel.displayFeed.snapshot.liveDock.isVisible {
+                Text("\(viewModel.displayFeed.snapshot.liveDock.english)\u{258C}")
+                    .font(translationTitleFont)
+                    .foregroundStyle(.white.opacity(0.86))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("Listening for the next line…")
                     .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.white.opacity(AppTheme.textSpanishInterim))
+                    .foregroundStyle(.white.opacity(AppTheme.textTertiary))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1))
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+        .background(.ultraThinMaterial)
     }
 
     private func registerNavBarAutoHide() {
@@ -558,12 +574,6 @@ struct TranslationTestView: View {
         return "Listening for speech…"
     }
 
-    private var activeSpanish: String {
-        let lines = viewModel.displayFeed.snapshot.spanishLines.joined(separator: " ")
-        if lines.isEmpty { return viewModel.displayFeed.snapshot.partialSpanish }
-        if viewModel.displayFeed.snapshot.partialSpanish.isEmpty { return lines }
-        return "\(lines) \(viewModel.displayFeed.snapshot.partialSpanish)"
-    }
 }
 
 private struct MicOnboardingSheet: View {
