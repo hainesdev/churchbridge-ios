@@ -169,10 +169,23 @@ struct VerseSuggestion: Codable, Hashable {
     }
 }
 
+struct PhraseAlignment: Codable, Hashable, Identifiable {
+    let englishText: String
+    let spanishText: String
+
+    var id: String { "\(englishText)|\(spanishText)" }
+
+    enum CodingKeys: String, CodingKey {
+        case englishText = "english_text"
+        case spanishText = "spanish_text"
+    }
+}
+
 struct TranslationSegment: Identifiable, Equatable {
     let segmentID: Int
     var spanish: String
     var english: String
+    var phraseAlignment: [PhraseAlignment] = []
     var verseDetected: VerseDetection?
     var verseSuggestions: [VerseSuggestion] = []
     var pendingCompletion = false

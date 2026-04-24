@@ -60,8 +60,14 @@ final class DisplayFeedStore {
         case "feed_commit":
             let spanish = (json["spanish"] as? String) ?? ""
             let english = (json["english"] as? String) ?? ""
+            let phraseAlignment = decodePhraseAlignment(from: json["phrase_alignment"])
             let segmentID = extractSegmentID(from: json) ?? Int(Date().timeIntervalSince1970 * 1000)
-            upsertCommittedSegment(segmentID: segmentID, spanish: spanish, english: english)
+            upsertCommittedSegment(
+                segmentID: segmentID,
+                spanish: spanish,
+                english: english,
+                phraseAlignment: phraseAlignment
+            )
             snapshot.finalSpanishLines.removeAll()
             snapshot.interimSpanish = ""
             clearLiveDock()
@@ -81,6 +87,9 @@ final class DisplayFeedStore {
             if let spanish = json["spanish"] as? String, !spanish.isEmpty {
                 snapshot.segments[index].spanish = spanish
             }
+            if let phraseAlignment = decodePhraseAlignment(from: json["phrase_alignment"]) {
+                snapshot.segments[index].phraseAlignment = phraseAlignment
+            }
             snapshot.segments[index].pendingCompletion = false
             flashSegment(snapshot.segments[index].segmentID)
             snapshot.lastVisibleSegmentID = snapshot.segments[index].segmentID
@@ -92,15 +101,21 @@ final class DisplayFeedStore {
             }
             guard
                 let keepID = extractSegmentID(from: json, preferredKey: "segment_id_keep", legacyKey: "ts_keep"),
-                let keepIndex = snapshot.segments.firstIndex(where: { $0.segmentID == keepID })
+                let absorbID = extractSegmentID(from: json, preferredKey: "segment_id_absorb", legacyKey: "ts_absorb"),
+                snapshot.segments.contains(where: { $0.segmentID == keepID })
             else {
                 return
             }
-            snapshot.segments[keepIndex].spanish = (json["spanish"] as? String) ?? snapshot.segments[keepIndex].spanish
-            snapshot.segments[keepIndex].english = (json["english"] as? String) ?? snapshot.segments[keepIndex].english
-            snapshot.segments[keepIndex].pendingCompletion = false
-            flashSegment(snapshot.segments[keepIndex].segmentID)
-            snapshot.lastVisibleSegmentID = snapshot.segments[keepIndex].segmentID
+            snapshot.segments.removeAll(where: { $0.segmentID == absorbID })
+            guard let refreshedKeepIndex = snapshot.segments.firstIndex(where: { $0.segmentID == keepID }) else {
+                return
+            }
+            snapshot.segments[refreshedKeepIndex].spanish = (json["spanish"] as? String) ?? snapshot.segments[refreshedKeepIndex].spanish
+            snapshot.segments[refreshedKeepIndex].english = (json["english"] as? String) ?? snapshot.segments[refreshedKeepIndex].english
+            snapshot.segments[refreshedKeepIndex].phraseAlignment = []
+            snapshot.segments[refreshedKeepIndex].pendingCompletion = false
+            flashSegment(snapshot.segments[refreshedKeepIndex].segmentID)
+            snapshot.lastVisibleSegmentID = snapshot.segments[refreshedKeepIndex].segmentID
 
         case "segment_metadata":
             guard
@@ -175,20 +190,38 @@ final class DisplayFeedStore {
         snapshot.liveDock = LiveTranslationDockState()
     }
 
-    private func upsertCommittedSegment(segmentID: Int, spanish: String, english: String) {
+    private func upsertCommittedSegment(
+        segmentID: Int,
+        spanish: String,
+        english: String,
+        phraseAlignment: [PhraseAlignment]?
+    ) {
         if let index = snapshot.segments.firstIndex(where: { $0.segmentID == segmentID }) {
             snapshot.segments[index].spanish = spanish
             snapshot.segments[index].english = english
+            snapshot.segments[index].phraseAlignment = phraseAlignment ?? snapshot.segments[index].phraseAlignment
         } else {
             snapshot.segments.append(
                 TranslationSegment(
                     segmentID: segmentID,
                     spanish: spanish,
-                    english: english
+                    english: english,
+                    phraseAlignment: phraseAlignment ?? []
                 )
             )
             snapshot.segments = Array(snapshot.segments.suffix(100))
         }
+    }
+
+    private func decodePhraseAlignment(from rawValue: Any?) -> [PhraseAlignment]? {
+        guard let rawValue else { return nil }
+        guard JSONSerialization.isValidJSONObject(rawValue),
+              let data = try? JSONSerialization.data(withJSONObject: rawValue),
+              let alignment = try? JSONDecoder().decode([PhraseAlignment].self, from: data)
+        else {
+            return nil
+        }
+        return alignment
     }
 
     private func extractSegmentID(
