@@ -52,7 +52,8 @@ final class DisplayFeedStore {
             let text = ((json["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
             let source = (json["source"] as? String) ?? type
-            updateLiveDock(text: text, source: source, at: now)
+            let mergeStrategy = (json["merge_strategy"] as? String) ?? defaultLiveMergeStrategy(for: source)
+            updateLiveDock(text: text, source: source, mergeStrategy: mergeStrategy, at: now)
 
         case "live_translation_clear":
             clearLiveDock()
@@ -180,8 +181,14 @@ final class DisplayFeedStore {
         }
     }
 
-    private func updateLiveDock(text: String, source: String, at now: Date) {
-        snapshot.liveDock.english = mergedLiveEnglish(current: snapshot.liveDock.english, incoming: text)
+    private func updateLiveDock(text: String, source: String, mergeStrategy: String, at now: Date) {
+        let incomingTrimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !incomingTrimmed.isEmpty else { return }
+        if mergeStrategy == "replace" {
+            snapshot.liveDock.english = incomingTrimmed
+        } else {
+            snapshot.liveDock.english = mergedLiveEnglish(current: snapshot.liveDock.english, incoming: incomingTrimmed)
+        }
         snapshot.liveDock.source = source
         snapshot.liveDock.updatedAt = now
     }
@@ -236,6 +243,15 @@ final class DisplayFeedStore {
             return legacy
         }
         return nil
+    }
+
+    private func defaultLiveMergeStrategy(for source: String) -> String {
+        switch source {
+        case "google_sentence", "google_correction", "google_interim", "llm":
+            return "replace"
+        default:
+            return "append"
+        }
     }
 
     private func mergedLiveEnglish(current: String, incoming: String) -> String {
