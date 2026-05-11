@@ -21,17 +21,6 @@
 		A0000000000000000000010C /* bible_ios.sqlite in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000E /* bible_ios.sqlite */; };
 		A0000000000000000000010D /* LocalBibleLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000F /* LocalBibleLibrary.swift */; };
 		A0000000000000000000010E /* BibleDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000010 /* BibleDataManager.swift */; };
-		B10000000000000000000101 /* ChurchBridgeAudioBenchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* ChurchBridgeAudioBenchApp.swift */; };
-		B10000000000000000000102 /* BenchmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* BenchmarkView.swift */; };
-		B10000000000000000000103 /* BenchmarkViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* BenchmarkViewModel.swift */; };
-		B10000000000000000000104 /* AudioPipelineVariant.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* AudioPipelineVariant.swift */; };
-		B10000000000000000000105 /* BenchmarkAudioCaptureManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* BenchmarkAudioCaptureManager.swift */; };
-		B10000000000000000000106 /* BenchmarkModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* BenchmarkModels.swift */; };
-		B10000000000000000000107 /* BenchmarkTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* BenchmarkTelemetry.swift */; };
-		B10000000000000000000108 /* BenchmarkReportWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* BenchmarkReportWriter.swift */; };
-		B10000000000000000000109 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000B /* Assets.xcassets */; };
-		B1000000000000000000010A /* BenchmarkControlClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* BenchmarkControlClient.swift */; };
-		B1000000000000000000010B /* BenchmarkStreamSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* BenchmarkStreamSocketClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -51,29 +40,10 @@
 		A0000000000000000000000E /* bible_ios.sqlite */ = {isa = PBXFileReference; lastKnownFileType = file; path = bible_ios.sqlite; sourceTree = "<group>"; };
 		A0000000000000000000000F /* LocalBibleLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalBibleLibrary.swift; sourceTree = "<group>"; };
 		A00000000000000000000010 /* BibleDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibleDataManager.swift; sourceTree = "<group>"; };
-		B10000000000000000000001 /* ChurchBridgeAudioBenchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChurchBridgeAudioBenchApp.swift; sourceTree = "<group>"; };
-		B10000000000000000000002 /* BenchmarkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkView.swift; sourceTree = "<group>"; };
-		B10000000000000000000003 /* BenchmarkViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkViewModel.swift; sourceTree = "<group>"; };
-		B10000000000000000000004 /* AudioPipelineVariant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPipelineVariant.swift; sourceTree = "<group>"; };
-		B10000000000000000000005 /* BenchmarkAudioCaptureManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkAudioCaptureManager.swift; sourceTree = "<group>"; };
-		B10000000000000000000006 /* BenchmarkModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkModels.swift; sourceTree = "<group>"; };
-		B10000000000000000000007 /* BenchmarkTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkTelemetry.swift; sourceTree = "<group>"; };
-		B10000000000000000000008 /* BenchmarkReportWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkReportWriter.swift; sourceTree = "<group>"; };
-		B10000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		B1000000000000000000000A /* ChurchBridgeAudioBench.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ChurchBridgeAudioBench.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		B1000000000000000000000B /* BenchmarkControlClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkControlClient.swift; sourceTree = "<group>"; };
-		B1000000000000000000000C /* BenchmarkStreamSocketClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkStreamSocketClient.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A00000000000000000000201 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		B10000000000000000000201 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -86,7 +56,6 @@
 		A00000000000000000000301 = {
 			isa = PBXGroup;
 			children = (
-				B10000000000000000000302 /* ChurchBridgeAudioBench */,
 				A00000000000000000000302 /* ChurchBridgeTranslation */,
 				A00000000000000000000303 /* Products */,
 			);
@@ -117,66 +86,14 @@
 		A00000000000000000000303 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				B1000000000000000000000A /* ChurchBridgeAudioBench.app */,
 				A0000000000000000000000D /* ChurchBridgeTranslation.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		B10000000000000000000302 /* ChurchBridgeAudioBench */ = {
-			isa = PBXGroup;
-			children = (
-				B10000000000000000000303 /* app */,
-				B10000000000000000000304 /* core */,
-			);
-			path = ChurchBridgeAudioBench;
-			sourceTree = "<group>";
-		};
-		B10000000000000000000303 /* app */ = {
-			isa = PBXGroup;
-			children = (
-				B10000000000000000000001 /* ChurchBridgeAudioBenchApp.swift */,
-				B10000000000000000000002 /* BenchmarkView.swift */,
-				B10000000000000000000003 /* BenchmarkViewModel.swift */,
-				B10000000000000000000009 /* Info.plist */,
-			);
-			path = app;
-			sourceTree = "<group>";
-		};
-		B10000000000000000000304 /* core */ = {
-			isa = PBXGroup;
-			children = (
-				B10000000000000000000004 /* AudioPipelineVariant.swift */,
-				B10000000000000000000005 /* BenchmarkAudioCaptureManager.swift */,
-				B1000000000000000000000B /* BenchmarkControlClient.swift */,
-				B1000000000000000000000C /* BenchmarkStreamSocketClient.swift */,
-				B10000000000000000000006 /* BenchmarkModels.swift */,
-				B10000000000000000000008 /* BenchmarkReportWriter.swift */,
-				B10000000000000000000007 /* BenchmarkTelemetry.swift */,
-			);
-			path = core;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		B10000000000000000000401 /* ChurchBridgeAudioBench */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = B10000000000000000000701 /* Build configuration list for PBXNativeTarget "ChurchBridgeAudioBench" */;
-			buildPhases = (
-				B10000000000000000000501 /* Sources */,
-				B10000000000000000000201 /* Frameworks */,
-				B10000000000000000000502 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = ChurchBridgeAudioBench;
-			productName = ChurchBridgeAudioBench;
-			productReference = B1000000000000000000000A /* ChurchBridgeAudioBench.app */;
-			productType = "com.apple.product-type.application";
-		};
 		A00000000000000000000401 /* ChurchBridgeTranslation */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A00000000000000000000701 /* Build configuration list for PBXNativeTarget "ChurchBridgeTranslation" */;
@@ -207,9 +124,6 @@
 					A00000000000000000000401 = {
 						CreatedOnToolsVersion = 26.4.1;
 					};
-					B10000000000000000000401 = {
-						CreatedOnToolsVersion = 26.4.1;
-					};
 				};
 			};
 			buildConfigurationList = A00000000000000000000702 /* Build configuration list for PBXProject "ChurchBridgeTranslation" */;
@@ -225,21 +139,12 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				B10000000000000000000401 /* ChurchBridgeAudioBench */,
 				A00000000000000000000401 /* ChurchBridgeTranslation */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		B10000000000000000000502 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				B10000000000000000000109 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		A00000000000000000000502 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -252,23 +157,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		B10000000000000000000501 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				B10000000000000000000104 /* AudioPipelineVariant.swift in Sources */,
-				B10000000000000000000105 /* BenchmarkAudioCaptureManager.swift in Sources */,
-				B1000000000000000000010A /* BenchmarkControlClient.swift in Sources */,
-				B1000000000000000000010B /* BenchmarkStreamSocketClient.swift in Sources */,
-				B10000000000000000000106 /* BenchmarkModels.swift in Sources */,
-				B10000000000000000000108 /* BenchmarkReportWriter.swift in Sources */,
-				B10000000000000000000107 /* BenchmarkTelemetry.swift in Sources */,
-				B10000000000000000000102 /* BenchmarkView.swift in Sources */,
-				B10000000000000000000103 /* BenchmarkViewModel.swift in Sources */,
-				B10000000000000000000101 /* ChurchBridgeAudioBenchApp.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		A00000000000000000000501 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -291,62 +179,6 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		B10000000000000000000801 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = YR6YYDC9S2;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ChurchBridgeAudioBench/app/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.churchbridgeqa.audiobench;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
-			};
-			name = Debug;
-		};
-		B10000000000000000000802 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = YR6YYDC9S2;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ChurchBridgeAudioBench/app/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.churchbridgeqa.audiobench;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
-			};
-			name = Release;
-		};
 		A00000000000000000000801 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -428,15 +260,6 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		B10000000000000000000701 /* Build configuration list for PBXNativeTarget "ChurchBridgeAudioBench" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				B10000000000000000000801 /* Debug */,
-				B10000000000000000000802 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		A00000000000000000000701 /* Build configuration list for PBXNativeTarget "ChurchBridgeTranslation" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
