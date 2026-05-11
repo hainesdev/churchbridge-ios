@@ -5,6 +5,7 @@ actor DisplaySocketClient {
     private var reconnectTask: Task<Void, Never>?
     private var currentURL: URL?
     private var churchID = ""
+    private var hasReceivedMessage = false
     private var statusHandler: (@Sendable (Bool) -> Void)?
     private var messageHandler: (@Sendable (Data) -> Void)?
     private var errorHandler: (@Sendable (String) -> Void)?
@@ -29,6 +30,7 @@ actor DisplaySocketClient {
     func disconnect() {
         reconnectTask?.cancel()
         reconnectTask = nil
+        hasReceivedMessage = false
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
         statusHandler?(false)
@@ -43,10 +45,10 @@ actor DisplaySocketClient {
             .appending(queryItems: [URLQueryItem(name: "church_id", value: churchID)])
 
         task?.cancel(with: .goingAway, reason: nil)
+        hasReceivedMessage = false
         let task = URLSession.shared.webSocketTask(with: url)
         self.task = task
         task.resume()
-        statusHandler?(true)
         listen(on: task)
     }
 
@@ -57,10 +59,18 @@ actor DisplaySocketClient {
                     let message = try await task.receive()
                     switch message {
                     case .string(let string):
+                        if !hasReceivedMessage {
+                            hasReceivedMessage = true
+                            statusHandler?(true)
+                        }
                         if let data = string.data(using: .utf8) {
                             messageHandler?(data)
                         }
                     case .data(let data):
+                        if !hasReceivedMessage {
+                            hasReceivedMessage = true
+                            statusHandler?(true)
+                        }
                         messageHandler?(data)
                     @unknown default:
                         break

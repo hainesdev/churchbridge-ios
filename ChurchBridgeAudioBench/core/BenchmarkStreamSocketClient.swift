@@ -1,12 +1,21 @@
 import Foundation
 
-actor StreamSocketClient {
+actor BenchmarkStreamSocketClient {
     struct StreamConfiguration: Sendable {
-        let url: URL
+        let baseURL: URL
         let churchID: String
         let sampleRate: Int
         let sourceScriptureVersion: String
         let displayScriptureVersion: String
+    }
+
+    struct BenchmarkCaptureDescriptor: Encodable, Sendable {
+        let enabled: Bool
+        let sessionId: String
+        let runId: String
+        let scenarioId: String
+        let pipelineId: String
+        let captureLabel: String
     }
 
     struct AudioSendResult: Sendable {
@@ -16,17 +25,17 @@ actor StreamSocketClient {
     }
 
     private var task: URLSessionWebSocketTask?
-    private var state: StreamStatus = .idle
+    private var state: BenchmarkStreamStatus = .idle
     private var retryTask: Task<Void, Never>?
     private var configuration: StreamConfiguration?
-    private var hasReceivedSessionStart = false
+    private var runSpec: BenchmarkRunSpec?
     private var messageHandler: (@Sendable (String) -> Void)?
-    private var statusHandler: (@Sendable (StreamStatus) -> Void)?
+    private var statusHandler: (@Sendable (BenchmarkStreamStatus) -> Void)?
     private var sessionIDHandler: (@Sendable (Int?) -> Void)?
     private let encoder = JSONEncoder()
 
     func setHandlers(
-        statusHandler: @escaping @Sendable (StreamStatus) -> Void,
+        statusHandler: @escaping @Sendable (BenchmarkStreamStatus) -> Void,
         messageHandler: @escaping @Sendable (String) -> Void,
         sessionIDHandler: @escaping @Sendable (Int?) -> Void
     ) {
@@ -35,8 +44,9 @@ actor StreamSocketClient {
         self.sessionIDHandler = sessionIDHandler
     }
 
-    func connect(configuration: StreamConfiguration) async {
+    func connect(configuration: StreamConfiguration, runSpec: BenchmarkRunSpec) async {
         self.configuration = configuration
+        self.runSpec = runSpec
         retryTask?.cancel()
         await openSocket(isReconnect: false)
     }
@@ -44,7 +54,6 @@ actor StreamSocketClient {
     func disconnect() async {
         retryTask?.cancel()
         retryTask = nil
-        hasReceivedSessionStart = false
         sessionIDHandler?(nil)
         if let task {
             try? await sendEncodable(StreamStopPayload(), over: task)
@@ -73,14 +82,13 @@ actor StreamSocketClient {
     }
 
     private func openSocket(isReconnect: Bool) async {
-        guard let configuration else { return }
-        let requestURL = configuration.url
+        guard let configuration, let runSpec else { return }
+        let requestURL = configuration.baseURL
             .appending(path: "api")
             .appending(path: "stream")
             .appending(path: "v1")
             .appending(queryItems: [URLQueryItem(name: "church_id", value: configuration.churchID)])
 
-        hasReceivedSessionStart = false
         sessionIDHandler?(nil)
         transition(to: isReconnect ? .reconnecting : .connecting)
         let task = URLSession.shared.webSocketTask(with: requestURL)
@@ -92,7 +100,15 @@ actor StreamSocketClient {
                 sampleRate: configuration.sampleRate,
                 topic: "",
                 sourceScriptureVersion: configuration.sourceScriptureVersion,
-                displayScriptureVersion: configuration.displayScriptureVersion
+                displayScriptureVersion: configuration.displayScriptureVersion,
+                benchmarkCapture: BenchmarkCaptureDescriptor(
+                    enabled: runSpec.saveServerCapture,
+                    sessionId: runSpec.benchmarkSessionID,
+                    runId: runSpec.runID,
+                    scenarioId: runSpec.scenarioID,
+                    pipelineId: runSpec.pipelineID.rawValue,
+                    captureLabel: runSpec.serverCaptureLabel ?? "\(runSpec.scenarioID)-\(runSpec.pipelineID.rawValue)"
+                )
             )
             try await sendEncodable(payload, over: task)
             listen(on: task)
@@ -110,9 +126,9 @@ actor StreamSocketClient {
                 while self.task === task {
                     let message = try await task.receive()
                     switch message {
-                    case .string(let string):
+                    case let .string(string):
                         await handleInboundString(string)
-                    case .data(let data):
+                    case let .data(data):
                         if let string = String(data: data, encoding: .utf8) {
                             await handleInboundString(string)
                         }
@@ -136,7 +152,6 @@ actor StreamSocketClient {
         guard let data = string.data(using: .utf8) else { return }
         if let started = try? JSONDecoder().decode(StreamSessionStartedEvent.self, from: data),
            started.type == "session_started" {
-            hasReceivedSessionStart = true
             transition(to: .connected)
             sessionIDHandler?(started.sessionId)
             return
@@ -148,7 +163,7 @@ actor StreamSocketClient {
     }
 
     private func scheduleReconnect() async {
-        guard configuration != nil else { return }
+        guard configuration != nil, runSpec != nil else { return }
         retryTask?.cancel()
         retryTask = Task {
             transition(to: .reconnecting)
@@ -157,7 +172,7 @@ actor StreamSocketClient {
         }
     }
 
-    private func transition(to nextState: StreamStatus) {
+    private func transition(to nextState: BenchmarkStreamStatus) {
         state = nextState
         statusHandler?(nextState)
     }
@@ -168,7 +183,6 @@ actor StreamSocketClient {
     ) async {
         guard self.task === failedTask else { return }
         messageHandler?(message)
-        hasReceivedSessionStart = false
         sessionIDHandler?(nil)
         failedTask.cancel(with: .goingAway, reason: nil)
         self.task = nil
@@ -181,4 +195,33 @@ actor StreamSocketClient {
         guard let string = String(data: data, encoding: .utf8) else { return }
         try await task.send(.string(string))
     }
+}
+
+private struct StreamStartPayload: Encodable {
+    let type = "session.start"
+    let sampleRate: Int
+    let topic: String
+    let sourceScriptureVersion: String
+    let displayScriptureVersion: String
+    let benchmarkCapture: BenchmarkStreamSocketClient.BenchmarkCaptureDescriptor
+}
+
+private struct StreamStopPayload: Encodable {
+    let type = "session.stop"
+}
+
+private struct StreamAudioPayload: Encodable {
+    let type = "audio"
+    let audio: String
+}
+
+private struct StreamSessionStartedEvent: Decodable {
+    let type: String
+    let sessionId: Int?
+    let captureActive: Bool?
+}
+
+private struct ErrorEvent: Decodable {
+    let type: String
+    let message: String
 }

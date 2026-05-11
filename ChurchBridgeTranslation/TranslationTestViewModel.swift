@@ -1342,6 +1342,8 @@ final class TranslationTestViewModel {
         switch normalized {
         case "applevoicepassthrough", "apple", "passthrough", "serverresample":
             return .appleVoicePassthrough
+        case "robustvoicefilter", "robust", "filtered", "production":
+            return .robustVoiceFilter
         case "persistentconverter", "persistent", "streamingconverter":
             return .persistentConverter
         case "ephemeralconverter", "ephemeral", "perbufferconverter":

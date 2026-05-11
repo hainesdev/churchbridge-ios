@@ -21,17 +21,20 @@ enum CaptureMode: String, CaseIterable, Identifiable, Codable {
 
 enum AudioCaptureStrategy: String, CaseIterable, Identifiable, Codable {
     case appleVoicePassthrough = "Apple Voice Passthrough"
+    case robustVoiceFilter = "Robust Voice Filter"
     case persistentConverter = "Persistent Converter"
     case ephemeralConverter = "Ephemeral Converter"
 
     var id: String { rawValue }
 
-    static let liveDefault: AudioCaptureStrategy = .appleVoicePassthrough
+    static let liveDefault: AudioCaptureStrategy = .robustVoiceFilter
 
     var summary: String {
         switch self {
         case .appleVoicePassthrough:
             return "Capture the voice-processing input format directly and let the server resample."
+        case .robustVoiceFilter:
+            return "Resample to 16 kHz locally, then apply speech-focused cleanup for noisy and echo-heavy rooms."
         case .persistentConverter:
             return "Keep one AVAudioConverter alive across callbacks and drain it like a stream."
         case .ephemeralConverter:
@@ -43,13 +46,18 @@ enum AudioCaptureStrategy: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .appleVoicePassthrough:
             return 48_000
-        case .persistentConverter, .ephemeralConverter:
+        case .robustVoiceFilter, .persistentConverter, .ephemeralConverter:
             return 16_000
         }
     }
 
     var isDiagnosticsOnly: Bool {
-        self != .appleVoicePassthrough
+        switch self {
+        case .appleVoicePassthrough, .robustVoiceFilter:
+            return false
+        case .persistentConverter, .ephemeralConverter:
+            return true
+        }
     }
 }
 
@@ -261,7 +269,7 @@ struct AudioDiagnostics {
     var captureRestartCount = 0
     var lastRestartAt: Date?
     var lastRestartReason = ""
-    var captureStrategy = AudioCaptureStrategy.appleVoicePassthrough.rawValue
+    var captureStrategy = AudioCaptureStrategy.liveDefault.rawValue
     var emittedSampleRate: Double = 16_000
     var chunkSampleCount = 1_600
 }

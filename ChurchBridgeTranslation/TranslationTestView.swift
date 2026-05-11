@@ -731,7 +731,7 @@ private struct SettingsSheet: View {
                             Text(mode.rawValue).tag(mode)
                         }
                     }
-                    Text("Live capture uses Apple Voice Passthrough. Advanced diagnostics stay in the waveform panel.")
+                    Text("Live capture uses the Robust Voice Filter path with Apple voice processing plus local speech cleanup. Advanced diagnostics stay in the waveform panel.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

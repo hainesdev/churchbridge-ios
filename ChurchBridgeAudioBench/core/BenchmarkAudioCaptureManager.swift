@@ -1,24 +1,24 @@
 @preconcurrency import AVFAudio
 import Foundation
 
-final class AudioCaptureManager: NSObject {
-    var diagnosticsDidChange: ((AudioDiagnostics) -> Void)?
+final class BenchmarkAudioCaptureManager: NSObject {
+    var telemetryDidChange: ((BenchmarkTelemetrySnapshot) -> Void)?
     var errorHandler: ((String) -> Void)?
-    var audioChunkHandler: ((AudioChunkEnvelope) -> Void)?
+    var audioChunkHandler: ((BenchmarkAudioChunkEnvelope) -> Void)?
 
     private let session = AVAudioSession.sharedInstance()
     private let engine = AVAudioEngine()
-    private let processingQueue = DispatchQueue(label: "ChurchBridgeTranslation.audio-processing", qos: .userInitiated)
+    private let processingQueue = DispatchQueue(label: "ChurchBridgeAudioBench.audio-processing", qos: .userInitiated)
     private let processingQueueKey = DispatchSpecificKey<UInt8>()
     private var hardwareInputFormat: AVAudioFormat?
     private var targetFormat: AVAudioFormat?
     private var converter: AVAudioConverter?
-    private var diagnostics = AudioDiagnostics()
+    private var telemetry = BenchmarkTelemetrySnapshot.placeholder
     private var pendingSamples: [Float] = []
     private var isRunning = false
-    private var currentMode: CaptureMode?
-    private var currentRequestedMode: CaptureMode?
-    private var currentStrategy: AudioCaptureStrategy = .liveDefault
+    private var currentMode: BenchmarkCaptureMode?
+    private var currentRequestedMode: BenchmarkCaptureMode?
+    private var currentStrategy: BenchmarkAudioProcessingStrategy = .liveDefault
     private var isReconfiguring = false
     private var lastReconfigureAt: Date?
     private var dcRejectPreviousInput: Float = 0
@@ -39,30 +39,36 @@ final class AudioCaptureManager: NSObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    func start(mode: CaptureMode, strategy: AudioCaptureStrategy) async throws {
+    func start(runSpec: BenchmarkRunSpec) async throws {
+        telemetry.activePipelineID = runSpec.pipelineID.rawValue
+        telemetry.pipelineFamily = runSpec.pipelineID.profile.family.rawValue
+        try await start(mode: runSpec.captureMode, strategy: runSpec.processingStrategy)
+    }
+
+    func start(mode: BenchmarkCaptureMode, strategy: BenchmarkAudioProcessingStrategy) async throws {
         guard !isRunning else { return }
 
         let granted = await AVAudioApplication.requestRecordPermission()
-        diagnostics.microphonePermissionGranted = granted
-        publishDiagnostics()
+        telemetry.microphonePermissionGranted = granted
+        publishTelemetry()
         guard granted else {
-            throw NSError(domain: "ChurchBridgeAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone permission was denied."])
+            throw NSError(domain: "ChurchBridgeAudioBench", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone permission was denied."])
         }
 
         let effectiveMode = resolveEffectiveMode(requestedMode: mode)
         currentMode = effectiveMode
         currentRequestedMode = mode
         currentStrategy = strategy
-        resetStageDiagnostics()
-        diagnostics.captureStrategy = strategy.rawValue
+        resetStageTelemetry()
+        telemetry.captureStrategy = strategy.rawValue
         try configureSession(for: effectiveMode)
         try configureEngine(for: effectiveMode, requestedMode: mode)
         engine.prepare()
         try engine.start()
-        diagnostics.engineRunning = engine.isRunning
+        telemetry.engineRunning = engine.isRunning
         isRunning = true
-        refreshRouteDiagnostics()
-        publishDiagnostics()
+        refreshRouteTelemetry()
+        publishTelemetry()
     }
 
     func stop() {
@@ -79,13 +85,13 @@ final class AudioCaptureManager: NSObject {
         currentRequestedMode = nil
         currentStrategy = .liveDefault
         lastReconfigureAt = nil
-        diagnostics.engineRunning = false
-        diagnostics.speechDetected = false
-        diagnostics.rmsLevel = 0
-        diagnostics.clipping = false
-        diagnostics.pendingSampleCount = 0
+        telemetry.engineRunning = false
+        telemetry.speechDetected = false
+        telemetry.rmsLevel = 0
+        telemetry.clipping = false
+        telemetry.pendingSampleCount = 0
         resetSignalConditioningState()
-        publishDiagnostics()
+        publishTelemetry()
 
         do {
             try session.setActive(false, options: .notifyOthersOnDeactivation)
@@ -94,25 +100,26 @@ final class AudioCaptureManager: NSObject {
         }
     }
 
-    private func resolveEffectiveMode(requestedMode: CaptureMode) -> CaptureMode {
+    private func resolveEffectiveMode(requestedMode: BenchmarkCaptureMode) -> BenchmarkCaptureMode {
         #if targetEnvironment(simulator)
-        diagnostics.capturePath = "Simulator fallback"
-        diagnostics.fallbackReason = "Simulator uses raw capture because Apple voice-processing behavior is device-only."
+        telemetry.capturePath = "Simulator fallback"
+        telemetry.fallbackReason = "Simulator uses raw capture because Apple voice-processing behavior is device-only."
         return .rawDebug
         #else
-        diagnostics.fallbackReason = ""
-        if requestedMode == .voiceProcessing {
-            diagnostics.capturePath = "Voice Processing"
-        } else if requestedMode == .echoCancelled {
-            diagnostics.capturePath = "Echo-Cancelled Input"
-        } else {
-            diagnostics.capturePath = "Raw Debug"
+        telemetry.fallbackReason = ""
+        switch requestedMode {
+        case .voiceProcessing:
+            telemetry.capturePath = "Voice Processing"
+        case .echoCancelled:
+            telemetry.capturePath = "Echo-Cancelled Input"
+        case .rawDebug:
+            telemetry.capturePath = "Raw Debug"
         }
         return requestedMode
         #endif
     }
 
-    private func configureSession(for mode: CaptureMode) throws {
+    private func configureSession(for mode: BenchmarkCaptureMode) throws {
         let sessionMode: AVAudioSession.Mode
         switch mode {
         case .voiceProcessing:
@@ -129,22 +136,22 @@ final class AudioCaptureManager: NSObject {
         try? session.setPreferredInputNumberOfChannels(1)
 
         if #available(iOS 18.2, *) {
-            diagnostics.echoCancelledInputAvailable = session.isEchoCancelledInputAvailable
+            telemetry.echoCancelledInputAvailable = session.isEchoCancelledInputAvailable
             if mode == .echoCancelled, session.isEchoCancelledInputAvailable {
                 try? session.setPrefersEchoCancelledInput(true)
             } else {
                 try? session.setPrefersEchoCancelledInput(false)
             }
-            diagnostics.echoCancelledInputEnabled = session.isEchoCancelledInputEnabled
+            telemetry.echoCancelledInputEnabled = session.isEchoCancelledInputEnabled
         } else {
-            diagnostics.echoCancelledInputAvailable = false
-            diagnostics.echoCancelledInputEnabled = false
+            telemetry.echoCancelledInputAvailable = false
+            telemetry.echoCancelledInputEnabled = false
         }
 
         try session.setActive(true, options: [])
     }
 
-    private func configureEngine(for mode: CaptureMode, requestedMode: CaptureMode) throws {
+    private func configureEngine(for mode: BenchmarkCaptureMode, requestedMode: BenchmarkCaptureMode) throws {
         engine.stop()
         engine.reset()
         teardownCaptureGraph()
@@ -153,36 +160,36 @@ final class AudioCaptureManager: NSObject {
         _ = engine.outputNode
         _ = engine.mainMixerNode
 
-        diagnostics.voiceProcessingRequested = requestedMode == .voiceProcessing
+        telemetry.voiceProcessingRequested = requestedMode == .voiceProcessing
 
         if mode == .voiceProcessing {
             do {
                 try inputNode.setVoiceProcessingEnabled(true)
-                diagnostics.voiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
+                telemetry.voiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
             } catch {
-                diagnostics.voiceProcessingEnabled = false
-                diagnostics.capturePath = "Raw fallback"
-                diagnostics.fallbackReason = "Voice processing could not be enabled on this route."
+                telemetry.voiceProcessingEnabled = false
+                telemetry.capturePath = "Raw fallback"
+                telemetry.fallbackReason = "Voice processing could not be enabled on this route."
                 emitError("Voice processing could not be enabled: \(error.localizedDescription)")
             }
         } else {
             if inputNode.isVoiceProcessingEnabled {
                 try? inputNode.setVoiceProcessingEnabled(false)
             }
-            diagnostics.voiceProcessingEnabled = false
-            if requestedMode == .echoCancelled && !diagnostics.echoCancelledInputEnabled && diagnostics.fallbackReason.isEmpty {
-                diagnostics.capturePath = "Raw fallback"
-                diagnostics.fallbackReason = "Echo-cancelled input is unavailable on this route."
+            telemetry.voiceProcessingEnabled = false
+            if requestedMode == .echoCancelled && !telemetry.echoCancelledInputEnabled && telemetry.fallbackReason.isEmpty {
+                telemetry.capturePath = "Raw fallback"
+                telemetry.fallbackReason = "Echo-cancelled input is unavailable on this route."
             }
         }
 
         let hardwareFormat = inputNode.outputFormat(forBus: 0)
         let outputSampleRate = currentStrategy == .appleVoicePassthrough ? hardwareFormat.sampleRate : 16_000
         guard let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: outputSampleRate, channels: 1, interleaved: false) else {
-            throw NSError(domain: "ChurchBridgeAudio", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unable to create output processing format."])
+            throw NSError(domain: "ChurchBridgeAudioBench", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unable to create output processing format."])
         }
         guard let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: hardwareFormat.sampleRate, channels: 1, interleaved: false) else {
-            throw NSError(domain: "ChurchBridgeAudio", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unable to create mono processing format."])
+            throw NSError(domain: "ChurchBridgeAudioBench", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unable to create mono processing format."])
         }
 
         hardwareInputFormat = hardwareFormat
@@ -196,21 +203,21 @@ final class AudioCaptureManager: NSObject {
         resetPendingSamples()
         resetSignalConditioningState()
 
-        diagnostics.inputSampleRate = hardwareFormat.sampleRate
-        diagnostics.inputChannels = Int(hardwareFormat.channelCount)
-        diagnostics.inputFormatDescription = describe(format: hardwareFormat)
-        diagnostics.targetSampleRate = targetFormat.sampleRate
-        diagnostics.emittedSampleRate = outputSampleRate
-        diagnostics.chunkSampleCount = chunkSampleCount(for: outputSampleRate)
-        diagnostics.voiceProcessingAGCEnabled = inputNode.isVoiceProcessingAGCEnabled
-        diagnostics.batchesSent = 0
-        diagnostics.lastBatchAt = nil
-        diagnostics.lastSpeechAt = nil
-        diagnostics.rmsLevel = 0
-        diagnostics.noiseFloor = 0
-        diagnostics.clipping = false
-        diagnostics.speechDetected = false
-        diagnostics.pendingSampleCount = 0
+        telemetry.inputSampleRate = hardwareFormat.sampleRate
+        telemetry.inputChannels = Int(hardwareFormat.channelCount)
+        telemetry.inputFormatDescription = describe(format: hardwareFormat)
+        telemetry.targetSampleRate = targetFormat.sampleRate
+        telemetry.outputSampleRate = outputSampleRate
+        telemetry.chunkSampleCount = chunkSampleCount(for: outputSampleRate)
+        telemetry.voiceProcessingAGCEnabled = inputNode.isVoiceProcessingAGCEnabled
+        telemetry.batchesSent = 0
+        telemetry.lastBatchAt = nil
+        telemetry.lastSpeechAt = nil
+        telemetry.rmsLevel = 0
+        telemetry.noiseFloor = 0
+        telemetry.clipping = false
+        telemetry.speechDetected = false
+        telemetry.pendingSampleCount = 0
 
         let tapBufferSize = max(AVAudioFrameCount((hardwareFormat.sampleRate * 0.02).rounded()), 256)
         inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hardwareFormat) { [weak self] buffer, _ in
@@ -219,22 +226,22 @@ final class AudioCaptureManager: NSObject {
     }
 
     private func captureBuffer(_ buffer: AVAudioPCMBuffer) {
-        diagnostics.tapCallbackCount += 1
-        diagnostics.tapFrameCount += Int(buffer.frameLength)
-        diagnostics.lastTapAt = Date()
+        telemetry.tapCallbackCount += 1
+        telemetry.tapFrameCount += Int(buffer.frameLength)
+        telemetry.lastTapAt = Date()
         guard let copiedSamples = copyMonoSamples(from: buffer) else {
-            diagnostics.copyMonoFailureCount += 1
-            publishDiagnostics()
+            telemetry.copyMonoFailureCount += 1
+            publishTelemetry()
             return
         }
-        diagnostics.copyMonoSuccessCount += 1
+        telemetry.copyMonoSuccessCount += 1
         processingQueue.async { [weak self] in
             self?.process(samples: copiedSamples)
         }
     }
 
     private func process(samples: [Float]) {
-        diagnostics.processingInvocationCount += 1
+        telemetry.processingInvocationCount += 1
 
         let outputSamples: [Float]
         if currentStrategy == .appleVoicePassthrough {
@@ -259,21 +266,24 @@ final class AudioCaptureManager: NSObject {
         guard !outputSamples.isEmpty else { return }
         updateLevels(from: outputSamples)
         pendingSamples.append(contentsOf: outputSamples)
-        diagnostics.pendingSampleCount = pendingSamples.count
-        diagnostics.pendingSampleHighWaterMark = max(diagnostics.pendingSampleHighWaterMark, pendingSamples.count)
+        telemetry.pendingSampleCount = pendingSamples.count
+        telemetry.pendingSampleHighWaterMark = max(telemetry.pendingSampleHighWaterMark, pendingSamples.count)
 
-        let chunkSamples = chunkSampleCount(for: diagnostics.emittedSampleRate)
+        let chunkSamples = chunkSampleCount(for: telemetry.outputSampleRate)
         while pendingSamples.count >= chunkSamples {
             let chunk = Array(pendingSamples.prefix(chunkSamples))
             pendingSamples.removeFirst(chunkSamples)
-            diagnostics.pendingSampleCount = pendingSamples.count
+            telemetry.pendingSampleCount = pendingSamples.count
             let base64 = chunk.withUnsafeBufferPointer { pointer in
                 Data(buffer: pointer).base64EncodedString()
             }
-            diagnostics.batchesSent += 1
-            diagnostics.lastBatchAt = Date()
-            publishDiagnostics()
-            emitChunk(base64, sampleRate: Int(diagnostics.emittedSampleRate.rounded()))
+            telemetry.batchesSent += 1
+            telemetry.lastBatchAt = Date()
+            telemetry.totalEmittedSamples += chunk.count
+            telemetry.lastChunkSampleRate = Int(telemetry.outputSampleRate.rounded())
+            telemetry.lastChunkEncodedBytes = base64.utf8.count
+            publishTelemetry()
+            emitChunk(base64, sampleRate: Int(telemetry.outputSampleRate.rounded()))
         }
     }
 
@@ -363,40 +373,40 @@ final class AudioCaptureManager: NSObject {
             }
 
             if let conversionError {
-                diagnostics.conversionFailureCount += 1
+                telemetry.conversionFailureCount += 1
                 emitError("Audio convert failed: \(conversionError.localizedDescription)")
-                publishDiagnostics()
+                publishTelemetry()
                 return nil
             }
 
             let frameCount = Int(outputBuffer.frameLength)
             if frameCount > 0, let channelData = outputBuffer.floatChannelData?[0] {
-                diagnostics.conversionSuccessCount += 1
-                diagnostics.convertedFrameCount += frameCount
-                diagnostics.lastConvertedAt = Date()
+                telemetry.conversionSuccessCount += 1
+                telemetry.convertedFrameCount += frameCount
+                telemetry.lastConvertedAt = Date()
                 outputSamples.append(contentsOf: UnsafeBufferPointer(start: channelData, count: frameCount))
             }
 
             switch status {
             case .haveData:
                 if frameCount == 0 {
-                    diagnostics.zeroFrameConversionCount += 1
-                    publishDiagnostics()
+                    telemetry.zeroFrameConversionCount += 1
+                    publishTelemetry()
                     return outputSamples.isEmpty ? nil : outputSamples
                 }
                 continue
             case .inputRanDry, .endOfStream:
                 if frameCount == 0 {
-                    diagnostics.zeroFrameConversionCount += 1
+                    telemetry.zeroFrameConversionCount += 1
                 }
-                publishDiagnostics()
+                publishTelemetry()
                 return outputSamples.isEmpty ? nil : outputSamples
             case .error:
-                diagnostics.conversionFailureCount += 1
-                publishDiagnostics()
+                telemetry.conversionFailureCount += 1
+                publishTelemetry()
                 return nil
             @unknown default:
-                publishDiagnostics()
+                publishTelemetry()
                 return outputSamples.isEmpty ? nil : outputSamples
             }
         }
@@ -447,9 +457,9 @@ final class AudioCaptureManager: NSObject {
 
         let frameCount = Float(filtered.count)
         let rms = sqrt(sumSquares / max(frameCount, 1))
-        let speechOpenThreshold = max(diagnostics.noiseFloor * 2.2, 0.008)
-        let speechCloseThreshold = max(diagnostics.noiseFloor * 1.4, 0.004)
-        let likelySpeech = rms >= speechOpenThreshold || peak >= max(diagnostics.noiseFloor * 4.0, 0.045)
+        let speechOpenThreshold = max(telemetry.noiseFloor * 2.2, 0.008)
+        let speechCloseThreshold = max(telemetry.noiseFloor * 1.4, 0.004)
+        let likelySpeech = rms >= speechOpenThreshold || peak >= max(telemetry.noiseFloor * 4.0, 0.045)
 
         if likelySpeech {
             gateHoldFramesRemaining = max(gateHoldFramesRemaining, filtered.count / 2)
@@ -482,24 +492,24 @@ final class AudioCaptureManager: NSObject {
         let peak = samples.reduce(Float.zero) { max($0, abs($1)) }
         let rms = sqrt(samples.reduce(Float.zero) { $0 + ($1 * $1) } / Float(samples.count))
         let nextNoiseFloor: Float
-        if diagnostics.noiseFloor == 0 {
+        if telemetry.noiseFloor == 0 {
             nextNoiseFloor = rms
-        } else if rms < diagnostics.noiseFloor {
-            nextNoiseFloor = diagnostics.noiseFloor * 0.8 + rms * 0.2
+        } else if rms < telemetry.noiseFloor {
+            nextNoiseFloor = telemetry.noiseFloor * 0.8 + rms * 0.2
         } else {
-            nextNoiseFloor = diagnostics.noiseFloor * 0.98 + rms * 0.02
+            nextNoiseFloor = telemetry.noiseFloor * 0.98 + rms * 0.02
         }
 
         let threshold = max(nextNoiseFloor * 2.5, 0.015)
         let speechDetected = rms >= threshold
-        diagnostics.rmsLevel = rms
-        diagnostics.noiseFloor = nextNoiseFloor
-        diagnostics.clipping = peak >= 0.98
-        diagnostics.speechDetected = speechDetected
+        telemetry.rmsLevel = rms
+        telemetry.noiseFloor = nextNoiseFloor
+        telemetry.clipping = peak >= 0.98
+        telemetry.speechDetected = speechDetected
         if speechDetected {
-            diagnostics.lastSpeechAt = Date()
+            telemetry.lastSpeechAt = Date()
         }
-        publishDiagnostics()
+        publishTelemetry()
     }
 
     private func describe(format: AVAudioFormat) -> String {
@@ -522,21 +532,21 @@ final class AudioCaptureManager: NSObject {
         return "\(commonFormat) | \(Int(format.channelCount)) ch | \(layout)"
     }
 
-    private func refreshRouteDiagnostics() {
+    private func refreshRouteTelemetry() {
         let route = session.currentRoute
-        diagnostics.routeInputs = route.inputs.map { "\($0.portType.rawValue) | \($0.portName)" }
-        diagnostics.routeOutputs = route.outputs.map { "\($0.portType.rawValue) | \($0.portName)" }
-        diagnostics.routeName = diagnostics.routeInputs.joined(separator: ", ")
-        if diagnostics.routeName.isEmpty {
-            diagnostics.routeName = "No active input route"
+        telemetry.routeInputs = route.inputs.map { "\($0.portType.rawValue) | \($0.portName)" }
+        telemetry.routeOutputs = route.outputs.map { "\($0.portType.rawValue) | \($0.portName)" }
+        telemetry.routeName = telemetry.routeInputs.joined(separator: ", ")
+        if telemetry.routeName.isEmpty {
+            telemetry.routeName = "No active input route"
         }
-        diagnostics.inputSampleRate = session.sampleRate
+        telemetry.inputSampleRate = session.sampleRate
     }
 
-    private func publishDiagnostics() {
-        let snapshot = diagnostics
+    private func publishTelemetry() {
+        let snapshot = telemetry
         DispatchQueue.main.async { [weak self] in
-            self?.diagnosticsDidChange?(snapshot)
+            self?.telemetryDidChange?(snapshot)
         }
     }
 
@@ -548,14 +558,14 @@ final class AudioCaptureManager: NSObject {
 
     private func emitChunk(_ base64: String, sampleRate: Int) {
         DispatchQueue.main.async { [weak self] in
-            self?.audioChunkHandler?(AudioChunkEnvelope(base64: base64, sampleRate: sampleRate))
+            self?.audioChunkHandler?(BenchmarkAudioChunkEnvelope(base64: base64, sampleRate: sampleRate))
         }
     }
 
     @objc
     private func handleRouteChange(_ notification: Notification) {
-        refreshRouteDiagnostics()
-        publishDiagnostics()
+        refreshRouteTelemetry()
+        publishTelemetry()
         if isRunning {
             reconfigureCaptureGraph(reason: "audio route change")
         }
@@ -579,8 +589,8 @@ final class AudioCaptureManager: NSObject {
     @objc
     private func handleEngineConfigurationChange(_ notification: Notification) {
         if isRunning {
-            refreshRouteDiagnostics()
-            publishDiagnostics()
+            refreshRouteTelemetry()
+            publishTelemetry()
             reconfigureCaptureGraph(reason: "engine configuration change")
         }
     }
@@ -593,10 +603,10 @@ final class AudioCaptureManager: NSObject {
             return
         }
 
-        diagnostics.captureRestartCount += 1
-        diagnostics.lastRestartAt = Date()
-        diagnostics.lastRestartReason = reason
-        lastReconfigureAt = diagnostics.lastRestartAt
+        telemetry.captureRestartCount += 1
+        telemetry.lastRestartAt = Date()
+        telemetry.lastRestartReason = reason
+        lastReconfigureAt = telemetry.lastRestartAt
         isReconfiguring = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -607,9 +617,9 @@ final class AudioCaptureManager: NSObject {
                 try self.configureEngine(for: mode, requestedMode: requestedMode)
                 self.engine.prepare()
                 try self.engine.start()
-                self.diagnostics.engineRunning = self.engine.isRunning
-                self.refreshRouteDiagnostics()
-                self.publishDiagnostics()
+                self.telemetry.engineRunning = self.engine.isRunning
+                self.refreshRouteTelemetry()
+                self.publishTelemetry()
                 completion?(true)
             } catch {
                 self.emitError("Audio capture reconfiguration failed after \(reason): \(error.localizedDescription)")
@@ -634,7 +644,7 @@ final class AudioCaptureManager: NSObject {
         } else {
             processingQueue.sync(execute: clear)
         }
-        diagnostics.pendingSampleCount = 0
+        telemetry.pendingSampleCount = 0
     }
 
     private func resetSignalConditioningState() {
@@ -652,26 +662,29 @@ final class AudioCaptureManager: NSObject {
         }
     }
 
-    private func resetStageDiagnostics() {
-        diagnostics.tapCallbackCount = 0
-        diagnostics.tapFrameCount = 0
-        diagnostics.lastTapAt = nil
-        diagnostics.copyMonoSuccessCount = 0
-        diagnostics.copyMonoFailureCount = 0
-        diagnostics.processingInvocationCount = 0
-        diagnostics.conversionSuccessCount = 0
-        diagnostics.conversionFailureCount = 0
-        diagnostics.zeroFrameConversionCount = 0
-        diagnostics.convertedFrameCount = 0
-        diagnostics.lastConvertedAt = nil
-        diagnostics.pendingSampleCount = 0
-        diagnostics.pendingSampleHighWaterMark = 0
-        diagnostics.captureRestartCount = 0
-        diagnostics.lastRestartAt = nil
-        diagnostics.lastRestartReason = ""
-        diagnostics.captureStrategy = currentStrategy.rawValue
-        diagnostics.emittedSampleRate = Double(currentStrategy.targetSampleRate)
-        diagnostics.chunkSampleCount = chunkSampleCount(for: diagnostics.emittedSampleRate)
+    private func resetStageTelemetry() {
+        telemetry.tapCallbackCount = 0
+        telemetry.tapFrameCount = 0
+        telemetry.lastTapAt = nil
+        telemetry.copyMonoSuccessCount = 0
+        telemetry.copyMonoFailureCount = 0
+        telemetry.processingInvocationCount = 0
+        telemetry.conversionSuccessCount = 0
+        telemetry.conversionFailureCount = 0
+        telemetry.zeroFrameConversionCount = 0
+        telemetry.convertedFrameCount = 0
+        telemetry.lastConvertedAt = nil
+        telemetry.pendingSampleCount = 0
+        telemetry.pendingSampleHighWaterMark = 0
+        telemetry.captureRestartCount = 0
+        telemetry.lastRestartAt = nil
+        telemetry.lastRestartReason = ""
+        telemetry.captureStrategy = currentStrategy.rawValue
+        telemetry.outputSampleRate = Double(currentStrategy.targetSampleRate)
+        telemetry.chunkSampleCount = chunkSampleCount(for: telemetry.outputSampleRate)
+        telemetry.totalEmittedSamples = 0
+        telemetry.lastChunkSampleRate = Int(telemetry.outputSampleRate.rounded())
+        telemetry.lastChunkEncodedBytes = 0
     }
 
     private func chunkSampleCount(for sampleRate: Double) -> Int {
