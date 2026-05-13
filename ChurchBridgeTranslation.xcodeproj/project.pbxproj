@@ -21,6 +21,8 @@
 		A0000000000000000000010C /* bible_ios.sqlite in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000E /* bible_ios.sqlite */; };
 		A0000000000000000000010D /* LocalBibleLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000F /* LocalBibleLibrary.swift */; };
 		A0000000000000000000010E /* BibleDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000010 /* BibleDataManager.swift */; };
+		A0000000000000000000010F /* DeepFilterNet3_Streaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000011 /* DeepFilterNet3_Streaming.swift */; };
+		A00000000000000000000110 /* DeepFilterNet3Processor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000012 /* DeepFilterNet3Processor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +42,8 @@
 		A0000000000000000000000E /* bible_ios.sqlite */ = {isa = PBXFileReference; lastKnownFileType = file; path = bible_ios.sqlite; sourceTree = "<group>"; };
 		A0000000000000000000000F /* LocalBibleLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalBibleLibrary.swift; sourceTree = "<group>"; };
 		A00000000000000000000010 /* BibleDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibleDataManager.swift; sourceTree = "<group>"; };
+		A00000000000000000000011 /* DeepFilterNet3_Streaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepFilterNet3_Streaming.swift; sourceTree = "<group>"; };
+		A00000000000000000000012 /* DeepFilterNet3Processor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepFilterNet3Processor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,6 +83,8 @@
 				A0000000000000000000000E /* bible_ios.sqlite */,
 				A0000000000000000000000F /* LocalBibleLibrary.swift */,
 				A00000000000000000000010 /* BibleDataManager.swift */,
+				A00000000000000000000011 /* DeepFilterNet3_Streaming.swift */,
+				A00000000000000000000012 /* DeepFilterNet3Processor.swift */,
 			);
 			path = ChurchBridgeTranslation;
 			sourceTree = "<group>";
@@ -166,6 +172,8 @@
 				A00000000000000000000101 /* ChurchBridgeTranslationApp.swift in Sources */,
 				A0000000000000000000010D /* LocalBibleLibrary.swift in Sources */,
 				A0000000000000000000010E /* BibleDataManager.swift in Sources */,
+				A0000000000000000000010F /* DeepFilterNet3_Streaming.swift in Sources */,
+				A00000000000000000000110 /* DeepFilterNet3Processor.swift in Sources */,
 				A00000000000000000000106 /* DisplaySocketClient.swift in Sources */,
 				A00000000000000000000107 /* DisplayFeedStore.swift in Sources */,
 				A0000000000000000000010A /* Models.swift in Sources */,

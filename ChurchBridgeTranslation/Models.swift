@@ -24,10 +24,11 @@ enum AudioCaptureStrategy: String, CaseIterable, Identifiable, Codable {
     case robustVoiceFilter = "Robust Voice Filter"
     case persistentConverter = "Persistent Converter"
     case ephemeralConverter = "Ephemeral Converter"
+    case deepFilterNet3Streaming = "DeepFilterNet3 Streaming"
 
     var id: String { rawValue }
 
-    static let liveDefault: AudioCaptureStrategy = .robustVoiceFilter
+    static let liveDefault: AudioCaptureStrategy = .deepFilterNet3Streaming
 
     var summary: String {
         switch self {
@@ -39,6 +40,8 @@ enum AudioCaptureStrategy: String, CaseIterable, Identifiable, Codable {
             return "Keep one AVAudioConverter alive across callbacks and drain it like a stream."
         case .ephemeralConverter:
             return "Build a fresh AVAudioConverter for each tap buffer to avoid sticky converter state."
+        case .deepFilterNet3Streaming:
+            return "Keep Apple voice processing in front, run DeepFilterNet3 on mono 48 kHz audio, then resample locally to the outgoing STT rate."
         }
     }
 
@@ -46,19 +49,35 @@ enum AudioCaptureStrategy: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .appleVoicePassthrough:
             return 48_000
-        case .robustVoiceFilter, .persistentConverter, .ephemeralConverter:
+        case .robustVoiceFilter, .persistentConverter, .ephemeralConverter, .deepFilterNet3Streaming:
             return 16_000
         }
     }
 
     var isDiagnosticsOnly: Bool {
         switch self {
-        case .appleVoicePassthrough, .robustVoiceFilter:
+        case .appleVoicePassthrough, .robustVoiceFilter, .deepFilterNet3Streaming:
             return false
         case .persistentConverter, .ephemeralConverter:
             return true
         }
     }
+}
+
+struct DeepFilterNet3Tuning: Sendable {
+    let wetMix: Float
+    let loudnessCompensation: Float
+    let maxCompensationGain: Float
+    let postGainDB: Float
+    let peakLimit: Float
+
+    static let liveDefault = DeepFilterNet3Tuning(
+        wetMix: 0.25,
+        loudnessCompensation: 0.95,
+        maxCompensationGain: 2.75,
+        postGainDB: 0,
+        peakLimit: 0.98
+    )
 }
 
 enum StreamStatus: String {

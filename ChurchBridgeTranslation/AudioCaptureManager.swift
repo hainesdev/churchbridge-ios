@@ -10,6 +10,12 @@ final class AudioCaptureManager: NSObject {
     private let engine = AVAudioEngine()
     private let processingQueue = DispatchQueue(label: "ChurchBridgeTranslation.audio-processing", qos: .userInitiated)
     private let processingQueueKey = DispatchSpecificKey<UInt8>()
+    private let deepFilterNet3Processor: DeepFilterNet3Processor? = {
+        if #available(iOS 18.0, *) {
+            return DeepFilterNet3Processor()
+        }
+        return nil
+    }()
     private var hardwareInputFormat: AVAudioFormat?
     private var targetFormat: AVAudioFormat?
     private var converter: AVAudioConverter?
@@ -55,6 +61,19 @@ final class AudioCaptureManager: NSObject {
         currentStrategy = strategy
         resetStageDiagnostics()
         diagnostics.captureStrategy = strategy.rawValue
+        if strategy == .deepFilterNet3Streaming {
+            if #available(iOS 18.0, *) {
+                do {
+                    deepFilterNet3Processor?.setTuning(.liveDefault)
+                    try await deepFilterNet3Processor?.prepare()
+                    deepFilterNet3Processor?.reset()
+                } catch {
+                    emitError("DeepFilterNet3 model was unavailable: \(error.localizedDescription). Falling back to Apple AEC-only audio until the assets can be loaded.")
+                }
+            } else {
+                emitError("DeepFilterNet3 requires iOS 18 or newer. Falling back to Apple AEC-only audio.")
+            }
+        }
         try configureSession(for: effectiveMode)
         try configureEngine(for: effectiveMode, requestedMode: mode)
         engine.prepare()
@@ -85,6 +104,9 @@ final class AudioCaptureManager: NSObject {
         diagnostics.clipping = false
         diagnostics.pendingSampleCount = 0
         resetSignalConditioningState()
+        if #available(iOS 18.0, *) {
+            deepFilterNet3Processor?.reset()
+        }
         publishDiagnostics()
 
         do {
@@ -188,7 +210,7 @@ final class AudioCaptureManager: NSObject {
         hardwareInputFormat = hardwareFormat
         self.targetFormat = targetFormat
         switch currentStrategy {
-        case .persistentConverter, .robustVoiceFilter:
+        case .persistentConverter, .robustVoiceFilter, .deepFilterNet3Streaming:
             converter = makeConverter(from: monoFormat, to: targetFormat)
         case .appleVoicePassthrough, .ephemeralConverter:
             converter = nil
@@ -242,18 +264,42 @@ final class AudioCaptureManager: NSObject {
         } else {
             guard
                 let hardwareInputFormat,
-                let sourceFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: hardwareInputFormat.sampleRate, channels: 1, interleaved: false),
-                let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(samples.count))
+                let sourceFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: hardwareInputFormat.sampleRate, channels: 1, interleaved: false)
             else {
                 return
             }
 
-            sourceBuffer.frameLength = AVAudioFrameCount(samples.count)
+            let processedSourceSamples: [Float]
+            switch currentStrategy {
+            case .deepFilterNet3Streaming:
+                if #available(iOS 18.0, *) {
+                    processedSourceSamples = deepFilterNet3Processor?.process(samples, sampleRate: Int(hardwareInputFormat.sampleRate)) ?? samples
+                } else {
+                    processedSourceSamples = samples
+                }
+            case .appleVoicePassthrough, .robustVoiceFilter, .persistentConverter, .ephemeralConverter:
+                processedSourceSamples = samples
+            }
+
+            guard let sourceBuffer = AVAudioPCMBuffer(
+                pcmFormat: sourceFormat,
+                frameCapacity: AVAudioFrameCount(processedSourceSamples.count)
+            ) else {
+                return
+            }
+            sourceBuffer.frameLength = AVAudioFrameCount(processedSourceSamples.count)
             guard let destination = sourceBuffer.floatChannelData?[0] else { return }
-            destination.update(from: samples, count: samples.count)
+            destination.update(from: processedSourceSamples, count: processedSourceSamples.count)
 
             guard let converted = convertBuffer(sourceBuffer, sourceFormat: sourceFormat) else { return }
-            outputSamples = currentStrategy == .robustVoiceFilter ? conditionSpeechForStreaming(converted) : converted
+            switch currentStrategy {
+            case .robustVoiceFilter:
+                outputSamples = conditionSpeechForStreaming(converted)
+            case .deepFilterNet3Streaming:
+                outputSamples = converted
+            case .appleVoicePassthrough, .persistentConverter, .ephemeralConverter:
+                outputSamples = converted
+            }
         }
 
         guard !outputSamples.isEmpty else { return }
@@ -339,7 +385,7 @@ final class AudioCaptureManager: NSObject {
             activeConverter = converter
         case .ephemeralConverter:
             activeConverter = makeConverter(from: sourceFormat, to: targetFormat)
-        case .robustVoiceFilter:
+        case .robustVoiceFilter, .deepFilterNet3Streaming:
             activeConverter = converter
         case .appleVoicePassthrough:
             activeConverter = nil
@@ -354,7 +400,7 @@ final class AudioCaptureManager: NSObject {
             guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else { return nil }
             let status = activeConverter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
                 if inputProvided {
-                    outStatus.pointee = self.currentStrategy == .persistentConverter ? .noDataNow : .endOfStream
+                    outStatus.pointee = (self.currentStrategy == .persistentConverter || self.currentStrategy == .robustVoiceFilter || self.currentStrategy == .deepFilterNet3Streaming) ? .noDataNow : .endOfStream
                     return nil
                 }
                 inputProvided = true
