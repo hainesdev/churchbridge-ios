@@ -47,7 +47,7 @@ Important practical note:
 
 Current bundle identifier:
 
-- `com.churchbridge.translationtest`
+- `com.churchbridgeqa.translationtest`
 
 Current Apple team id:
 
@@ -113,7 +113,7 @@ Exact root cause:
 
 Typical failure lines found in the logs:
 
-- `No profiles for 'com.churchbridge.translationtest' were found`
+- `No profiles for 'com.churchbridgeqa.translationtest' were found`
 - `Your team has no devices from which to generate a provisioning profile.`
 
 Meaning:
@@ -249,4 +249,3 @@ For the next native iOS feature or release, use this order:
 - [AppIcon.appiconset](C:/Users/Dan/Desktop/Projects/macOS-ios-dev/shared/churchbridge-ios/ChurchBridgeTranslation/Assets.xcassets/AppIcon.appiconset)
 - [SettingsStore.swift](C:/Users/Dan/Desktop/Projects/macOS-ios-dev/shared/churchbridge-ios/ChurchBridgeTranslation/SettingsStore.swift)
 - [AudioCaptureManager.swift](C:/Users/Dan/Desktop/Projects/macOS-ios-dev/shared/churchbridge-ios/ChurchBridgeTranslation/AudioCaptureManager.swift)
-
