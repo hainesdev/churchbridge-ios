@@ -51,7 +51,8 @@ Current bundle identifier:
 
 Current Apple team id:
 
-- `YR6YYDC9S2`
+- Set in Xcode under Signing & Capabilities; the team identifier is not
+  recorded here.
 
 Current default backend server:
 
