@@ -5,7 +5,7 @@ on-device noise suppression, the live caption view, and the scripture reader.
 
 ## What is most useful
 
-**Field reports from real rooms.** Capture behaviour is the whole point of this
+**Field reports from real rooms.** Capture behavior is the whole point of this
 app, and it cannot be evaluated from a desk. If you have run it in a service:
 what the room was like, where the phone sat, which capture path was active, what
 the diagnostics showed when things degraded. That is worth more than most code.
@@ -20,7 +20,7 @@ specific device and route is genuinely useful.
 
 This is the rule most likely to trip you up. The simulator is fine for build
 validation, UI flow, and settings work. It is **not** valid for judging audio
-quality, echo cancellation, automatic gain behaviour, or microphone isolation —
+quality, echo cancellation, automatic gain behavior, or microphone isolation —
 it has already behaved differently from real hardware, and the app deliberately
 falls back to a different capture path there and reports that it did so.
 

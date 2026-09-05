@@ -19,7 +19,7 @@ do not apply to the components below.
 `ChurchBridgeTranslation/DeepFilterNet3_Streaming.swift` implement the
 DeepFilterNet3 streaming signal chain — STFT analysis and synthesis, the ERB
 filterbank and its inverse, deep-filter application, overlap-add memory, and
-running normalisation — in Swift against Accelerate. The architecture,
+running normalization — in Swift against Accelerate. The architecture,
 coefficients, and processing order are DeepFilterNet's; the Swift
 implementation is not.
 
