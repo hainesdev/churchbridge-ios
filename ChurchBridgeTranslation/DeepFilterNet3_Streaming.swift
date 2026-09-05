@@ -1,3 +1,10 @@
+//
+// DeepFilterNet3 streaming configuration and Core ML wrapper.
+// Architecture from DeepFilterNet (https://github.com/Rikorose/DeepFilterNet),
+// Copyright (c) 2021 Hendrik Schroeter, MIT License.
+// See LICENSE-DEEPFILTERNET and THIRD-PARTY-NOTICES.md.
+//
+
 import CoreML
 import Foundation
 
